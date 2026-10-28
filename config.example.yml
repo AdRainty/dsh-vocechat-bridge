@@ -1,0 +1,48 @@
+# 在 profile 的 cordis.patch.yml 按 id 覆盖；服务凭据由 credentials 服务或环境变量提供。
+# 本示例不用旧桥接的8899端口，不会覆盖旧配置；填好后才启用。
+- id: vocechat-bridge
+  config:
+    enabled: false
+    baseUrl: 'https://chat.example.com'
+    botUid: 2
+    botApiKeyRef: VOCECHAT_BOT_API_KEY
+    webhookSecretRef: VOCECHAT_WEBHOOK_SECRET
+    webhookHost: 127.0.0.1
+    webhookPort: 8898
+    webhookPath: /vocehook
+    targetSessionId: 'session-REPLACE-ME'
+    agentPreset: ''
+    userWhitelist: [100]
+    groupWhitelist: [10]
+    groupSenderWhitelist: []
+    autoReply: true
+    allowProactive: false
+    allowedLocalRoots: ['K:/Shared/vocechat-outgoing']
+    allowedRemoteOrigins: ['https://media.example.com']
+    statePath: ''
+    tempDir: ''
+    requestTimeoutMs: 30000
+    turnTimeoutMs: 180000
+    maxMediaBytes: 26214400
+    maxAudioSeconds: 300
+    maxBodyBytes: 262144
+    maxQueue: 200
+    maxHistory: 5000
+    maxTextChars: 16000
+    textSegmentChars: 2000
+    mergeWindowMs: 300
+    maxBatch: 10
+    dedupTtlMs: 86400000
+    retentionMs: 86400000
+    logLevel: info
+    asrEnabled: false
+    asrBaseUrl: 'http://127.0.0.1:8000/v1'
+    asrModel: whisper-1
+    asrAcceptedFormats: ['wav', 'mp3', 'ogg', 'm4a', 'flac', 'webm'] # 仅接受 WAV 的服务改为 ['wav']，自动转码
+    asrApiKeyRef: ''
+    asrLanguage: zh
+    asrTimeoutMs: 60000
+    ffmpegPath: ffmpeg
+    ffprobePath: ffprobe
+    ttsProvider: ''
+    audioUnderstandingProvider: ''

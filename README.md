@@ -1,93 +1,300 @@
-# dsh-vocechat
+# dsh-vocechat-bridge
 
+已实现 **v0.1.0**：面向 **DSH 0.2.1-rc.3 / Node.js 22.19+** 的原生 TypeScript 插件。支持固定会话双向文字/图片/文件/已有音频、兼容服务 ASR、组合发送、来源隔离和持久化队列。默认禁用，安装不会接管旧桥接。
 
+- [安装、配置、工具与运行说明](docs/USAGE.md)
+- [旧桥接迁移与回滚](docs/MIGRATION.md)
+- [验证结果和已知限制](docs/VALIDATION.md)
+- [DSH 接口核实](docs/DSH-API.md) · [VoceChat API 核实](docs/VOCECHAT-API.md)
+- [ASR 配置和 Provider 扩展](docs/PROVIDERS.md)
+- [完整配置示例](config.example.yml)
 
-## Getting started
-
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
-```
-cd existing_repo
-git remote add origin https://gitlab.adrainty.online/dsh-plugins/dsh-vocechat.git
-git branch -M master
-git push -uf origin master
+```powershell
+npm ci --legacy-peer-deps
+npm run check
+npm pack
+dsh plugin --profile web add "K:\Code\Tools\dsh-plugins\dsh-vocechat-bridge"
 ```
 
-## Integrate with your tools
+先按配置文档填写凭据引用、白名单与 Session，再显式启用。真实 VoceChat/ASR 服务端到端联调尚未执行；已经完成 Mock 自动化、本机 FFmpeg 转码及真实 DSH 发行库兼容性验证。TTS 和音频理解提供独立扩展接口，未内置模型服务。以下保留原始项目目标和验收要求。
 
-* [Set up project integrations](https://gitlab.adrainty.online/dsh-plugins/dsh-vocechat/-/settings/integrations)
+## 一、项目目标
 
-## Collaborate with your team
+开发独立的 DeepSeek Harness 原生插件 `dsh-vocechat-bridge`，将目前基于 Webhook 的 VoceChat 桥接升级为完整的双向多模态通信插件。
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+兼容当前 DSH 0.2.1-rc.3，优先使用 TypeScript + Node.js。
 
-## Test and Deploy
+核心能力：
 
-Use the built-in continuous integration in GitLab.
+- 接收 VoceChat 文字、图片、语音和文件。
+- 收到语音后自动下载、识别并转写为文本。
+- 支持 Agent 主动发送文字、图片、语音和文件。
+- 支持一条回复包含文字和多个媒体附件。
+- 支持固定 DSH Session，实现跨渠道记忆连续性。
+- 预留音频理解能力，未来可以接入 Qwen Omni。
+- 不通过复杂的文本标记或大段提示词实现消息协议。
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+**本项目仅负责 VoceChat 通信与多模态处理，不实现人格、记忆或自主定时调度。**
 
-***
+## 二、开始前的调查
 
-# Editing this README
+首先检查：
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+1. DSH 当前版本的插件开发接口、Agent 和 Session API。
+2. 当前 VoceChat Webhook 桥接实现。
+3. `dsh-qq-bridge` 的消息接收、Session 绑定、消息发送和工具注册机制。
+4. VoceChat 官方 Bot API、Webhook、附件下载、文件上传、语音与图片发送方式。
+5. 当前 DSH 是否提供原生音频、图片或多模态消息输入接口。
 
-## Suggestions for a good README
+参考资料：
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+- https://github.com/deepseek-ai/deepseek-harness
+- https://github.com/sj244/dsh-qq-bridge
+- https://doc.voce.chat/
 
-## Name
-Choose a self-explaining name for your project.
+必须基于实际源码和 API 文档开发，不得臆造接口或消息字段。
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+## 三、消息接收
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+支持：
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+- VoceChat 私聊、群聊。
+- UID / GID 白名单。
+- 指定固定 DSH Session。
+- 文本、图片、语音、普通附件。
+- 消息 ID 去重和顺序处理。
+- Bot 自身消息过滤，避免循环。
+- 多消息并发时的安全排队及消息合并。
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+内部使用统一的结构化消息对象，保留来源、发送者、消息时间、消息 ID、附件元数据。
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+不要再把来源说明、`<noop>` 规则和 `[img:路径]` 之类的字符串追加到每条用户消息后面。
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+## 四、语音接收与自动转写
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+这是本次新增的重点功能。
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+### 4.1 语音处理流程
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+VoceChat 收到语音消息后：
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+1. 识别语音消息类型。
+2. 通过 VoceChat API 下载原始语音。
+3. 检测实际音频格式和时长。
+4. 必要时转换为 ASR 服务支持的格式。
+5. 调用可配置的语音识别服务。
+6. 获得文字转写结果。
+7. 将转写内容和原始消息来源送入绑定的 DSH Session。
+8. 清理临时文件，保留必要的处理记录。
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+支持常见的 WAV、MP3、OGG/Opus、M4A 等格式；实际支持范围应以 VoceChat 接口和音频解码能力为准。
 
-## License
-For open source projects, say how it is licensed.
+音频转换可以使用 FFmpeg，但应检测依赖是否存在，并提供明确错误说明。
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+### 4.2 ASR 引擎
+
+设计可扩展的语音识别 Provider 接口。
+
+第一阶段至少支持一种可以实际运行的 ASR 服务，并预留：
+
+- OpenAI 兼容的语音转写 API。
+- 阿里云百炼语音识别接口。
+- 本地 Whisper / faster-whisper 等服务。
+
+支持配置 API 地址、模型、鉴权、超时、语言和音频大小限制。
+
+ASR 不可用时，要明确记录错误，不能生成虚假的转写内容。
+
+### 4.3 音频理解扩展
+
+预留 `AudioUnderstandingProvider` 接口。
+
+未来可接入 Qwen Omni，对原始语音进行：
+
+- 语音内容识别。
+- 语速、音量、语调等声学线索分析。
+- 笑声、叹气、哭声等非语言声音识别。
+- 环境声音与背景音描述。
+- 不确定的情绪线索分析。
+
+**语音转写和音频理解必须是两个可以独立启用的功能。**
+
+第一阶段优先保证转写稳定，音频理解可以只实现接口及可扩展架构，不强制接入模型。
+
+## 五、多模态消息发送
+
+这是第二个新增重点。
+
+### 5.1 文字发送
+
+支持：
+
+- 普通文本。
+- 多行文本。
+- 回复指定消息。
+- 主动发送。
+- 根据 VoceChat 能力进行必要的长文本分段。
+
+### 5.2 图片发送
+
+支持：
+
+- 发送本地图片。
+- 发送允许访问的远程图片。
+- PNG、JPEG、WebP 等常用格式。
+- 一次发送多张图片。
+- 文字与图片组合回复。
+
+图片应通过插件的文件上传和消息发送接口处理，不依赖 `[img:/绝对路径]` 这样的文本协议。
+
+### 5.3 语音发送
+
+支持两种方式：
+
+**方式 A：发送已有音频**
+
+Agent 可以选择本地音频文件，通过插件上传并作为 VoceChat 语音或音频消息发送。
+
+**方式 B：文字转语音**
+
+预留可配置的 TTS Provider：
+
+- 输入文字。
+- 调用 TTS 模型生成语音。
+- 转换成 VoceChat 支持的格式。
+- 上传并发送。
+
+第一阶段优先实现已有音频文件发送，TTS 可作为独立扩展能力。
+
+不要强制每条回复都生成语音。
+
+### 5.4 组合消息
+
+统一支持以下出站内容：
+
+- 纯文字。
+- 纯图片。
+- 纯语音。
+- 文字 + 图片。
+- 文字 + 语音。
+- 文字 + 多张图片 + 音频附件。
+
+由统一的消息发送层根据 VoceChat 实际 API 能力决定如何上传及发送。
+
+如果平台不支持单个消息气泡携带多种媒体，应按顺序拆分发送，并尽量保持逻辑关联。
+
+## 六、Agent 工具接口
+
+注册独立的消息工具，例如：
+
+- `voce_send_text`
+- `voce_send_image`
+- `voce_send_audio`
+- `voce_send_file`
+- `voce_send_message`（统一组合消息接口）
+
+具体工具命名遵守 DSH 规范。
+
+发送目标必须明确，并校验 UID/GID 权限。
+
+支持 Agent 主动发消息，也支持常规用户消息的自动回复。
+
+不应要求模型自己拼接图片标记、音频标记、上传 URL 或 API 请求参数。
+
+支持安静结束，不回复时由桥接层完成处理。
+
+## 七、Session 与消息路由
+
+支持绑定现有 DSH Session，保留已有汐月的 SOUL、长期记忆、人格和聊天历史。
+
+区分：
+
+- VoceChat 私聊。
+- VoceChat 群聊。
+- DSH Web。
+- QQ。
+- 其他系统内部消息。
+
+必须正确处理回复目标，防止跨渠道误发。
+
+同一 Session 收到多个来源消息时，需要安全排队，避免产生冲突的 Agent Turn。
+
+## 八、配置管理
+
+插件应提供配置界面或等效配置入口，包括：
+
+- VoceChat 服务地址。
+- Bot API Key。
+- Webhook 端口和路径。
+- UID/GID 白名单。
+- Session 绑定。
+- ASR Provider 与模型。
+- ASR API 地址及鉴权。
+- 音频格式、时长和大小限制。
+- TTS Provider（可选）。
+- 自动回复与主动发送开关。
+- 临时文件目录。
+- 日志级别。
+
+所有敏感凭据应安全保存，不得出现在模型上下文或普通日志。
+
+## 九、安全和稳定性
+
+- 验证 Webhook 来源及签名（若接口支持）。
+- 对入站消息进行去重和来源校验。
+- 限制媒体大小、音频时长和请求超时。
+- 下载媒体时防止 SSRF 和不可信文件路径访问。
+- 处理音频转换失败、ASR 超时和附件上传失败。
+- 临时文件定期清理。
+- 避免 Bot 自发自收造成消息循环。
+- 外部消息不得提升 DSH 工具权限。
+- 不允许通过消息附件访问任意本地文件。
+- 不修改 DSH 核心程序和现有 SOUL/记忆文件。
+
+## 十、测试要求
+
+测试至少覆盖：
+
+1. VoceChat 私聊、群聊文本收发。
+2. 收到语音并成功转写。
+3. 转写失败时正确处理。
+4. 接收图片和普通文件。
+5. 主动发送文字、图片及语音。
+6. 文字与多个媒体组合发送。
+7. 文件格式不支持时的错误处理。
+8. ASR 服务不可用及超时。
+9. UID/GID 白名单与消息去重。
+10. 多渠道共享 Session 的并发安全。
+11. Bot 回环保护。
+12. 重启后连接和 Session 恢复。
+13. 插件启用、禁用及异常恢复。
+
+使用 Mock VoceChat API 和测试 DSH Session 完成自动化测试。
+
+有条件时进行真实服务联调，并区分模拟测试与实际测试结果。
+
+## 十一、最终交付
+
+- `dsh-vocechat-bridge` 完整源码。
+- 可安装的 DSH 插件。
+- 配置说明及配置示例。
+- ASR Provider 扩展文档。
+- 多模态消息发送工具说明。
+- 自动化测试。
+- 实际运行验证结果。
+- 从旧 Webhook 迁移的操作指南。
+- 已知限制及回滚方法。
+
+## 十二、开发执行要求
+
+先调查接口，再设计架构，然后实际完成代码与测试。
+
+优先完成文本桥接、语音转写、图片发送和已有音频发送，之后完善 TTS 扩展能力。
+
+不要只输出技术方案。
+
+不要修改人格、记忆、自主定时任务或其他不相关模块。
+
+不覆盖现有 VoceChat 桥接配置；正式切换前先备份并验证。
+
+除真正阻塞开发的事项外，自主解决实现细节并记录取舍。

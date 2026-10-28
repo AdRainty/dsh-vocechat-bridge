@@ -1,0 +1,17 @@
+- insert:
+    - id: vocechat-bridge
+      name: dsh-vocechat-bridge
+      config:
+        enabled: false
+        baseUrl: ''
+        botUid: 0
+        targetSessionId: ''
+        botApiKeyRef: VOCECHAT_BOT_API_KEY
+        webhookSecretRef: VOCECHAT_WEBHOOK_SECRET
+        webhookHost: 127.0.0.1
+        webhookPort: 8898
+        webhookPath: /vocehook
+        userWhitelist: []
+        groupWhitelist: []
+        asrEnabled: false
+        allowProactive: false

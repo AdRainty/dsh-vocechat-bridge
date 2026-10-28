@@ -1,0 +1,57 @@
+import type { Destination, OutgoingAttachment } from './types.ts';
+export declare function mimeOf(name: string): string;
+export interface VoceChatOptions {
+    baseUrl: string;
+    resolveApiKey: () => Promise<string | undefined>;
+    timeoutMs?: number;
+    maxMediaBytes?: number;
+    allowedLocalRoots?: string[];
+    allowedRemoteOrigins?: string[];
+    audioContentType?: 'vocechat/audio' | 'vocechat/file';
+}
+export interface SendOptions {
+    replyTo?: number;
+    signal?: AbortSignal;
+    validate?: (bytes: Buffer, name: string, mime: string) => Promise<void>;
+}
+export interface UploadedFile {
+    path: string;
+    size: number;
+    hash?: string;
+    width?: number;
+    height?: number;
+}
+export interface SendResult {
+    messageId: number;
+    remotePath?: string;
+    size?: number;
+    audioFallback?: boolean;
+}
+export declare class VoceChatClient {
+    readonly options: VoceChatOptions;
+    readonly baseUrl: URL;
+    readonly maxMediaBytes: number;
+    readonly timeoutMs: number;
+    constructor(options: VoceChatOptions);
+    private endpoint;
+    private request;
+    sendText(destination: Destination, text: string, options?: SendOptions): Promise<SendResult>;
+    private parseMessageId;
+    upload(bytes: Uint8Array, meta: {
+        name: string;
+        contentType: string;
+        signal?: AbortSignal;
+    }): Promise<UploadedFile>;
+    download(resourcePath: string, name?: string, signal?: AbortSignal): Promise<{
+        bytes: Buffer;
+        name: string;
+        contentType: string;
+    }>;
+    loadSource(source: OutgoingAttachment, signal?: AbortSignal): Promise<{
+        bytes: Buffer;
+        name: string;
+        contentType: string;
+    }>;
+    validateLocalPath(value: string): Promise<string>;
+    sendAttachment(destination: Destination, source: OutgoingAttachment, options?: SendOptions): Promise<SendResult>;
+}

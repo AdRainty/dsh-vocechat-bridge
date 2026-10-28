@@ -1,0 +1,50 @@
+{
+  "name": "dsh-vocechat-bridge",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Native fixed-session VoceChat bridge for DeepSeek Harness with structured media and ASR",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./core": "./dist/bridge.js",
+    "./audio": "./dist/audio.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "dist",
+    "src",
+    "tests",
+    "scripts",
+    "tsconfig.json",
+    "cordis.patch.yml",
+    "config.example.yml",
+    "README.md",
+    "docs",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --experimental-strip-types --test --test-concurrency=1 --test-timeout=30000 tests/*.test.ts",
+    "check": "npm run build && npm test",
+    "prepack": "npm run build"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/schemastery": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "typescript": "^5.9.3"
+  }
+}

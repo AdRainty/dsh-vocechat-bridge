@@ -1,0 +1,48 @@
+# 验证记录与限制
+
+日期：2026-10-29，Windows，Node.js **22.19.0**，TypeScript **5.9.3**。本机 DSH 发行版本 **0.2.1-rc.3**。
+
+## 自动化与本机运行
+
+`npm run check`：TypeScript 严格编译通过，**61 项自动化测试通过，0 失败，0 跳过**。
+
+| 套件 | 数量 | 验证内容 |
+| --- | ---: | --- |
+| `audio.test.ts` | 15 | 文件 magic、WAV 实际时长、压缩格式探测、大小/时长限制、multipart ASR、无鉴权本地服务、HTTP/连接/格式错误、超时取消、凭据去敏、真实 FFmpeg 转码及清理 |
+| `bridge.test.ts` | 21 | Webhook GET/POST 鉴权、实际 HTTP 文本出站、私聊/群聊、白名单/自消息/去重、持久 ACK、并发与合并、背压、语音成功失败、图片/文件入站、文字+多图片+音频+文件组合出站、部分成功、禁用/重启、请求取消、未完成 ACK 写入的停止屏障、活动临时文件保护 |
+| `dsh.test.ts` | 14 | 固定 Session、宿主忙碌队列、消息 ID/turn 归属、其他渠道混入、原生附件、冷恢复模型/preset、lease 释放、工具来源身份、quiet、失败与取消 |
+| `vocechat.test.ts` | 11 | 官方端点、Base64 X-Properties、实际 multipart 字节、音频 415 降级、资源路径、本地 realpath 白名单、格式/大小/上传异常、公网地址与 origin 拒绝、禁止重定向、响应流超时 |
+
+测试启动真实的本地 HTTP Mock VoceChat/ASR 服务，使用假的 DSH 会话进行闭环。没有把 Mock 的固定转写结果当成真实语音识别能力。ASR provider 确实发送 multipart 文件并解析服务响应，但本次没有启动 Whisper 模型或请求云端模型。
+
+本机已经实际运行 FFprobe/FFmpeg：生成 FLAC，检测容器与时长，转换 16kHz 单声道 PCM WAV，检查输出超限拒绝以及临时文件清理。缺失 FFprobe/FFmpeg 分支也有明确错误测试。
+
+测试按文件串行执行并设置 30 秒上限；这台 Windows/Node 环境并行运行多个测试进程时曾出现关闭本地 Mock 连接等待不结束，改为串行后完整套件正常退出。桥接自身的消息并发仍有独立测试。
+
+## 真实发行库兼容性
+
+使用本机 DSH `app.asar` 内的真实库验证：
+
+- `createUserMessage` 与 Session event 校验接受结构化插件来源，消息被冻结。
+- 真实 `defineTool` 编译七个工具并执行参数校验。
+- 真实 Schemastery 解析默认禁用配置。
+- 加载打包入口 `dist/index.js`，在假 ctx 中执行 `apply/effect/dispose`；无监听、无用户配置写入、无模型调用、无真实消息。
+
+可复现命令见 [DSH-API.md](DSH-API.md)，脚本为 `scripts/verify-host.cjs`。这验证入口与发行库兼容性，不代表生产服务已切换。
+
+## 未执行的联调
+
+尚未在真实 VoceChat Bot、真实 DSH Session 与真实 ASR 模型三者连接的环境中端到端发送测试消息。未改旧 Webhook、watchdog 或生产 profile。部署时按 [MIGRATION.md](MIGRATION.md) 在测试 Bot/群验证后再切换。
+
+## 已知限制
+
+1. Bot API 的 `replyTo` 为可见 Markdown 消息 ID 引用，不是原生引用气泡；媒体组合拆为有序多条。`vocechat/audio` 的兼容差异及 HTTP 415 降级见 API 调查记录。
+2. 当前只接收明文 JSON Webhook；VoceChat 可选 AES 密文不受支持，也没有原生 HMAC 签名协议可供验证。共享 secret 与反向代理承担入口认证。
+3. 只接收官方 Webhook 投递的消息。不补轮询其他机器人消息，不实现表情包管理、人格、记忆或自主定时调度。
+4. 图片理解依赖目标模型的图片输入能力；DSH 本版本没有原生 audio block，采用转写文本加原音频文件。TTS、阿里百炼专用协议和 Qwen Omni 仅预留 Provider 扩展点，当前内置运行的 ASR 协议为兼容 `/audio/transcriptions` 的服务。
+5. Webhook ACK 与发送 API 之间没有分布式事务。网络断开可能出现服务端已发送而客户端未确认；已入队/已启动 turn 的不确定结果不自动重试。断电级别持久化和严格 exactly-once 不在本版保证范围内。
+6. 去重使用全局 VoceChat mid，受 `dedupTtlMs` 与 `maxHistory` 限制；不要让多个 Bot/多个进程共用同一个 statePath。群白名单授权整个群，需更细限制时配置 groupSenderWhitelist。
+7. 固定 Session 的 Web/QQ 队列若持续繁忙，桥接可能在 `turnTimeoutMs` 内未能投递而记为 uncertain；不会抢占。其他渠道主动 steer 造成同轮来源混合时，本插件停止外发。
+8. ASR/VoceChat API 基址是管理员配置，允许内网自托管地址。远程出站媒体只允许配置的公网 origin；不支持出站媒体的私网 URL、重定向或 HTTP 代理自定义路由。
+9. 取消/禁用只停止桥接等待和发送，不取消共享 Agent。已经入队的 Agent 工作可能继续完成，不会在桥接停止后自动转发结果。
+10. 状态文件保留必要聊天内容；DSH durable attachments 由宿主保留。自动清理仅处理插件临时目录，管理聊天历史与宿主附件仍遵循 DSH 规则。
