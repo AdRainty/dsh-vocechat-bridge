@@ -12,6 +12,53 @@
 6. 新端点 GET 验证必须带共享 secret；确认 Webhook 不启用旧 AES 加密。发送一次私聊和群聊，核对原目标回复、图片/音频与白名单；在 DSH Web 和 QQ 各发一条测试消息，确认没有自动转到 VoceChat。
 7. 确认完成前保留旧程序与备份。不要导入旧 `[img:...]`、`<noop>` 或“所有会话回复都转发”的消息协议；新插件通过工具与本轮来源完成这些行为。
 
+## 旧脚本中需要保留的迁移经验
+
+以下依据旧 `vocechat-bridge/bridge.mjs` 的 `onSessionEvent`、`pushIncoming`、`groupIdOf`、`mimoAsr` 以及《移植说明-群聊与语音.md》核对。它们是部署时踩过的兼容问题；新插件的对应行为和差异必须一起检查。
+
+### 主动开口不能误发给最近来信人
+
+旧脚本将 `lastUid` 初始化为 `VOCE_DEFAULT_UID`，收到有效且非 Bot 的用户消息时更新为最近来信人的 UID。非桥接触发的会话轮次也会转发，目标取当时的 `lastUid`；配置 `VOCE_DEFAULT_GID` 时，主动消息按该群路由。这样会让 Web、其他渠道或自主任务的输出继承一个与当前意图无关的接收者。`VOCE_DEFAULT_UID` 只是初始值，并不能固定住之后的私聊目标；重启后尚未收到消息且没有默认 UID 时，旧出口还会因缺少 UID 跳过发送。
+
+新插件没有“最近来信人”兜底：普通自动回复绑定触发消息的目标；主动发送必须调用 `voce_send_*`，显式提供 `destination`，同时满足目标白名单和 `allowProactive:true`。旧环境里的默认 UID/GID 不能自动转换成新插件的主动收件人配置。要恢复主动开口，需要让原有调用方明确选择目标，本插件不实现自主调度。
+
+迁移验证：让两个不同 UID 先后来信，再从 Web 或其他渠道产生会话输出，确认不会自动发给最后来信人；然后使用明确目标测试一次主动发送，核对实际接收者。不要用生产用户互相可见的内容测试。
+
+### 群 ID 的四个兼容位置要逐项核对
+
+旧 `groupIdOf(payload, detail)` 依次尝试下面四个对象。在每个对象内，优先读 `gid`，其次 `group_id`，最后仅在 `type === 'group'` 时读 `id`，取第一个有效的正数：
+
+| 顺序 | 旧脚本尝试的位置 |
+| --- | --- |
+| 1 | `detail.target` |
+| 2 | `payload.target` |
+| 3 | `detail.properties` |
+| 4 | `payload.properties` |
+
+当前新插件的 [入站解析](../src/inbound.ts) 按官方 Webhook 形状读取顶层 `payload.target.gid` 或 `payload.target.uid`，**没有移植上述四位置及别名兜底**。不能因为旧脚本能收群消息，就认为同一份旧载荷可以直接迁移。如果实际群 ID 只出现在其他位置，载荷可能被拒；若同时带有可被解释为私聊的 `target.uid`，还存在被误判为私聊的风险，应在启用前排除。
+
+迁移验证：用测试群取得脱敏的 Webhook 样本，核对群消息最终解析为 `{kind:'group', id:实际GID}`，回复端点为 `send_to_group`。若部署产生非标准载荷，先在入口适配成官方结构，或基于实际样本增加解析适配及回归测试，再进行切换；遇到多个群 ID 字段冲突时应拒绝，而不是猜测一个目标。不要在普通日志中保留原始载荷、聊天正文或凭据。
+
+旧脚本还使用全局 `REPLY_SCOPE` 保存群目标，依赖串行处理。移植时不能让并发消息共享可变目标；新插件将 `destination` 保存在每条结构化消息和本轮状态中。
+
+### ASR 的容器、采样率、声道与请求协议要分别确认
+
+旧脚本记录的实际问题是：手机语音可能为 M4A，而当时接入的 ASR 只接受 WAV/MP3。`mimoAsr` 对非 `.wav`/`.mp3` 文件先执行 FFmpeg，转换为 **16 kHz、单声道 WAV**，再按旧服务要求编码请求；已有 WAV/MP3 则直接上传。只改文件扩展名或 MIME 不会完成音频转换。
+
+新插件默认接受 WAV、MP3、OGG、M4A、FLAC、WebM 并直接上传，不能据此推断实际 ASR 服务支持全部格式。对仅接受 WAV 的服务可设置：
+
+```yaml
+asrAcceptedFormats: ['wav']
+ffmpegPath: ffmpeg
+ffprobePath: ffprobe
+```
+
+此配置会把 **M4A 等非 WAV 容器**转换为 16 kHz、单声道、PCM WAV；**已有 WAV 不会重新采样或混为单声道**。当前没有“对所有输入强制 16 kHz 单声道”的配置项。若所选服务连 WAV 的采样率、声道或内部编码也有要求，需要在上游归一化音频或扩展 Provider 后再接入；用实际样本检查 FFprobe 结果，不能仅检查 `.wav` 后缀。依赖、大小、时长及格式错误应明确处理，失败时不生成转写。
+
+另外，旧 `mimoAsr` 使用 `/chat/completions` 的 JSON `input_audio` / Base64 协议；新插件内置 Provider 使用 `/audio/transcriptions` 的 multipart 协议。旧 ASR 地址、模型名和凭据引用不能机械复制后视为兼容，必须核实服务支持的请求协议。配置和扩展方法见 [PROVIDERS.md](PROVIDERS.md)。
+
+迁移验证：至少使用一条手机 M4A 和一条已有 WAV，分别确认实际上传格式、采样率、声道和识别结果，并测试格式拒绝或转写失败的处理。先在测试服务完成这些检查，再替换正式语音链路。
+
 ## 回滚
 
 1. 将新插件 `enabled` 设为 `false`，重启该 DSH profile；确认状态工具显示停止或插件已经卸载。
