@@ -127,6 +127,11 @@ export class BridgeRuntime {
         return this.active.bridge.getHistory(destination, limit, options);
     }
     session = {
+        assertToolSession: (agent) => {
+            if (!this.active)
+                throw new Error('BRIDGE_STOPPED');
+            this.active.session.assertToolSession(agent);
+        },
         outboundMode: (agent, destination) => {
             if (!this.active)
                 throw new Error('BRIDGE_STOPPED');

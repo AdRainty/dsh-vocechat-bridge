@@ -8,5 +8,5 @@ export declare function registerVoceTools(ctx: {
     };
 }, bridge: Pick<Bridge, 'send' | 'getHistory'> & {
     status(): unknown;
-}, session: Pick<DshSessionPort, 'outboundMode' | 'noteSent' | 'quiet'>, defineTool: DefineTool): void;
+}, session: Pick<DshSessionPort, 'assertToolSession' | 'outboundMode' | 'noteSent' | 'quiet'>, defineTool: DefineTool): void;
 export {};

@@ -12,6 +12,14 @@ function abortable(operation, signal) {
     });
 }
 const sameDestination = (a, b) => a.kind === b.kind && a.id === b.id;
+/** Producer-owned context records verified in the host and installed plugins. */
+function isInfrastructureMessage(message) {
+    const { kind, form } = message.source ?? {};
+    return kind === 'runtime-context'
+        || kind === 'time-context' && form === 'snapshot'
+        || kind === 'model-selection' && form === 'notice'
+        || kind === 'dsh-mnemon' && (form === 'instructions' || form === 'recall');
+}
 /** Uses the host's one driver; never steers or cancels a shared channel's turn. */
 export class DshSessionPort {
     supportsSubmissionBarrier = true;
@@ -247,9 +255,9 @@ export class DshSessionPort {
                             run.turn = run.currentTurn;
                             return;
                         }
-                        // Harness context is infrastructure, not a new channel. Every
-                        // other user-role producer in the same turn closes automatic routing.
-                        if (message.source?.kind !== 'runtime-context' && run.currentTurn !== undefined)
+                        // Memory recall, time snapshots and model notices are also user-role
+                        // infrastructure. Unknown producers remain external input.
+                        if (!isInfrastructureMessage(message) && run.currentTurn !== undefined)
                             run.contaminated = true;
                         return;
                     }
@@ -287,26 +295,28 @@ export class DshSessionPort {
                 this.active = undefined;
         }
     }
-    /** Used only by tools with the host-provided execution agent. */
-    outboundMode(agent, destination) {
+    /** Reads and sends share identity checks, but not automatic reply ownership. */
+    assertToolSession(agent) {
         if (!agent || agent.session.id !== this.config.targetSessionId || this.ctx.agents.get(agent.id) !== agent)
             throw new Error('TOOL_SESSION_DENIED');
+    }
+    /** Explicit sends in a mixed turn require the normal proactive send policy. */
+    outboundMode(agent, destination) {
+        this.assertToolSession(agent);
         const run = this.active;
-        if (run?.agent === agent && run.turn !== undefined) {
-            if (run.contaminated)
-                throw new Error('SHARED_TURN_ROUTING_DENIED');
+        if (run && run.agent === agent && run.turn !== undefined && run.turn === run.currentTurn && !run.contaminated) {
             return { proactive: !sameDestination(run.destination, destination) };
         }
         return { proactive: true };
     }
     noteSent(agent, destination) {
         const run = this.active;
-        if (run && agent === run.agent && !run.contaminated && sameDestination(run.destination, destination))
+        if (run && agent === run.agent && run.turn !== undefined && run.turn === run.currentTurn && !run.contaminated && sameDestination(run.destination, destination))
             run.sent = true;
     }
     quiet(agent) {
         const run = this.active;
-        if (!run || agent !== run.agent || run.turn === undefined || run.contaminated)
+        if (!run || agent !== run.agent || run.turn === undefined || run.turn !== run.currentTurn || run.contaminated)
             throw new Error('NO_VOCECHAT_TURN');
         run.quiet = true;
     }

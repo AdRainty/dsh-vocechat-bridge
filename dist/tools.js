@@ -72,7 +72,7 @@ export function registerVoceTools(ctx, bridge, session, defineTool) {
             limit: { type: 'integer', description: 'Number of recent messages: 1-100, defaults to 20. A text budget can shorten the result; see truncated.' },
         }, async (args, exec) => {
             const to = destination({ kind, id: args[idKey] });
-            session.outboundMode(exec?.agent, to); // The fixed-session check also protects read tools; allowProactive is a send policy.
+            session.assertToolSession(exec?.agent); // History has its own destination allowlist; reading does not acquire reply ownership.
             return JSON.stringify(await bridge.getHistory(to, args.limit ?? 20, { signal: exec?.signal }));
         });
     }

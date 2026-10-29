@@ -58,7 +58,9 @@ export declare class DshSessionPort implements SessionPort {
     private mountContext;
     private content;
     private perform;
-    /** Used only by tools with the host-provided execution agent. */
+    /** Reads and sends share identity checks, but not automatic reply ownership. */
+    assertToolSession(agent: HostAgent | undefined): void;
+    /** Explicit sends in a mixed turn require the normal proactive send policy. */
     outboundMode(agent: HostAgent | undefined, destination: Destination): {
         proactive: boolean;
     };

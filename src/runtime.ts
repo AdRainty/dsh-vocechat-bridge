@@ -87,6 +87,9 @@ export class BridgeRuntime {
     return this.active.bridge.getHistory(destination,limit,options);
   }
   readonly session = {
+    assertToolSession:(agent:HostAgent|undefined)=>{
+      if(!this.active)throw new Error('BRIDGE_STOPPED');this.active.session.assertToolSession(agent);
+    },
     outboundMode:(agent:HostAgent|undefined,destination:Destination)=>{
       if(!this.active)throw new Error('BRIDGE_STOPPED');return this.active.session.outboundMode(agent,destination);
     },

@@ -144,10 +144,67 @@ test('foreign external input in the same turn closes automatic routing; harness 
   f.setFollowup(m => {
     f.start(m);
     f.emit('user/message', { id: 'qq-input', source: { kind: 'plugin:dsh-qq-bridge' } });
-    assert.throws(() => f.session.outboundMode(f.agent, { kind: 'user', id: 7 }), /SHARED_TURN/);
+    assert.deepEqual(f.session.outboundMode(f.agent, { kind: 'user', id: 7 }), { proactive: true });
     f.answer('must stay in shared session');
   });
   assert.deepEqual(await f.session.run([incoming()], signal()), { text: undefined, sent: false, quiet: true });
+});
+
+test('memory recall, clock snapshots and model notices do not close automatic routing', async () => {
+  const f = fixture();
+  const contexts = [
+    { kind: 'runtime-context', form: 'snapshot' },
+    { kind: 'dsh-mnemon', form: 'instructions' },
+    { kind: 'dsh-mnemon', form: 'recall' },
+    { kind: 'time-context', form: 'snapshot' },
+    { kind: 'model-selection', form: 'notice' },
+  ];
+  f.setFollowup(m => {
+    f.start(m);
+    for (const source of contexts) f.emit('user/message', { id: randomUUID(), source });
+    f.emit('step/start', { turn: 1, step: 2 });
+    f.emit('user/message', { id: randomUUID(), source: contexts[3] });
+    assert.deepEqual(f.session.outboundMode(f.agent, { kind: 'user', id: 7 }), { proactive: false });
+    f.answer('normal reply');
+  });
+  assert.deepEqual(await f.session.run([incoming()], signal()), { text: 'normal reply', sent: false, quiet: false });
+  // Other records from the same producer are not blanket-trusted as context.
+  f.setFollowup(m => {
+    f.start(m); f.emit('user/message', { id: randomUUID(), source: { kind: 'dsh-mnemon', form: 'task' } });
+    f.answer('mixed input stays local');
+  });
+  assert.equal((await f.session.run([incoming()], signal())).quiet, true);
+});
+
+test('mixed turns allow whitelisted history and explicit proactive sends while suppressing automatic replies', async () => {
+  const f = fixture(), controller = new AbortController();
+  const reads: any[] = [], sends: any[] = [];
+  let allowProactive = false;
+  registerVoceTools(f.ctx, {
+    async getHistory(to: any) {
+      if (to.kind !== 'group' || to.id !== 20) throw new Error('DESTINATION_DENIED');
+      reads.push(to); return boundHistory(to, [], 5, 2000);
+    },
+    async send(to: any, message: any, options: any) {
+      if (options.proactive && !allowProactive) throw new Error('PROACTIVE_DISABLED');
+      sends.push({ to, message, proactive: options.proactive }); return [123];
+    }, status: () => ({}),
+  }, f.session, value => value);
+  f.setFollowup(m => {
+    f.start(m); f.emit('user/message', { id: 'web-input', source: { kind: 'user' } });
+    void (async () => {
+      await f.tools.get('voce_get_group_history').execute({ gid: 20, limit: 5 }, { agent: f.agent });
+      await assert.rejects(f.tools.get('voce_get_group_history').execute({ gid: 99 }, { agent: f.agent }), /DESTINATION_DENIED/);
+      const args = { destination: { kind: 'user', id: 7 }, text: 'explicit destination' };
+      await assert.rejects(f.tools.get('voce_send_text').execute(args, { agent: f.agent }), /PROACTIVE_DISABLED/);
+      allowProactive = true;
+      await f.tools.get('voce_send_text').execute(args, { agent: f.agent });
+      f.answer('this automatic text stays local');
+    })().catch(error => controller.abort(error));
+  });
+  assert.deepEqual(await f.session.run([incoming()], controller.signal), { text: undefined, sent: false, quiet: true });
+  assert.equal(reads.length, 1); assert.equal(sends.length, 1); assert.equal(sends[0].proactive, true);
+  assert.deepEqual(f.session.outboundMode(f.agent, { kind: 'user', id: 7 }), { proactive: true });
 });
 
 test('empty final step does not resend a tool-step progress message', async () => {

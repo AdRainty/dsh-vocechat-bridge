@@ -95,6 +95,7 @@ export declare class BridgeRuntime {
     send(destination: Destination, message: OutboundMessage, options?: Parameters<Bridge['send']>[2]): Promise<unknown[]>;
     getHistory(destination: Destination, limit?: number, options?: Parameters<Bridge['getHistory']>[2]): Promise<import("./types.ts").ConversationHistory>;
     readonly session: {
+        assertToolSession: (agent: HostAgent | undefined) => void;
         outboundMode: (agent: HostAgent | undefined, destination: Destination) => {
             proactive: boolean;
         };

@@ -31,7 +31,7 @@ function media(value: any): OutgoingAttachment {
 
 /** Register DSH tools using the actual host defineTool compiler (injected by entry). */
 export function registerVoceTools(ctx: { tools: { register(tool: any): any } }, bridge: Pick<Bridge, 'send'|'getHistory'> & {status():unknown},
-  session: Pick<DshSessionPort,'outboundMode'|'noteSent'|'quiet'>, defineTool: DefineTool) {
+  session: Pick<DshSessionPort,'assertToolSession'|'outboundMode'|'noteSent'|'quiet'>, defineTool: DefineTool) {
   const output = { schema: { type: 'string' }, render: (_args: any, value: string) => [{ type: 'text', text: value }] };
   const send = async (args: any, exec: Execution, message: OutboundMessage) => {
     const to = destination(args.destination);
@@ -75,7 +75,7 @@ export function registerVoceTools(ctx: { tools: { register(tool: any): any } }, 
         limit:{type:'integer',description:'Number of recent messages: 1-100, defaults to 20. A text budget can shorten the result; see truncated.'},
       },async(args,exec)=>{
         const to=destination({kind,id:args[idKey]});
-        session.outboundMode(exec?.agent,to); // The fixed-session check also protects read tools; allowProactive is a send policy.
+        session.assertToolSession(exec?.agent); // History has its own destination allowlist; reading does not acquire reply ownership.
         return JSON.stringify(await bridge.getHistory(to,args.limit??20,{signal:exec?.signal}));
       });
   }
