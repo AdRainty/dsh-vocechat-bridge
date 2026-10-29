@@ -13,6 +13,7 @@ async function waitFor<T>(fn:()=>Promise<T>, accepts:(value:T)=>boolean, timeout
   throw new Error('Live harness condition timed out');
 }
 async function start(dir:string,config:any) {
+  config={privateQuietMs:10,groupQuietMs:10,maxWaitMs:1000,...config};
   const path=join(dir,'config.json');await writeFile(path,JSON.stringify(config));
   const child=spawn(process.execPath,[resolve('scripts/live-webhook.mjs'),path],{cwd:resolve('.'),windowsHide:true,stdio:['ignore','pipe','pipe']});
   let stdout='',stderr='';child.stdout.on('data',chunk=>{stdout+=chunk;});child.stderr.on('data',chunk=>{stderr+=chunk;});
@@ -82,4 +83,21 @@ test('explicit plaintext audit mode accepts token-free callbacks without enablin
   assert.ok(audit.some(e=>e.stage==='http'&&e.method==='POST'&&e.status===202&&e.plaintextTest===true&&!e.hasQuerySecret&&!e.hasAuthorization));
   assert.equal(JSON.stringify(audit).includes('fixture-secret'),false);
   assert.equal((await fetch(harness.url+'/other',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(fixture(2))})).status,404);
+});
+
+test('receiver process restart restores the debounce buffer and repeated delivery cannot duplicate the batch',async t=>{
+  const dir=await mkdtemp(join(tmpdir(),'voce-live-restart-'));
+  const config={baseUrl:'http://127.0.0.1:1',botUid:4,botApiKey:'fixture-bot-key',webhookSecret:'fixture-secret',host:'127.0.0.1',port:0,outputDir:dir,requireWebhookToken:false,privateQuietMs:1000,maxWaitMs:3000};
+  let harness=await start(dir,config);
+  t.after(async()=>{await harness.stop();await rm(dir,{recursive:true,force:true});});
+  const post=(value:any)=>fetch(harness.url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(value)});
+  await post(fixture(1));await post(fixture(2));
+  const before=JSON.parse(await readFile(join(dir,'state.json'),'utf8'));assert.equal(before.batches[0].phase,'buffering');assert.equal(before.batches[0].jobIds.length,2);
+  await harness.stop();harness=await start(dir,config);
+  const state=await waitFor(harness.status,s=>s.bridge.counts.done===2);
+  assert.equal(state.prepared,2);assert.equal(state.batchesPrepared,1);
+  const after=JSON.parse(await readFile(join(dir,'state.json'),'utf8'));assert.equal(after.batches[0].dueAt,before.batches[0].dueAt);
+  assert.equal((await (await post(fixture(1))).json()).status,'duplicate');
+  const audit=(await readFile(join(dir,'events.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(audit.filter(e=>e.stage==='batch-prepared').length,1);
 });

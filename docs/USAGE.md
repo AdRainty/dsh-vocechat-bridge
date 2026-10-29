@@ -14,7 +14,7 @@ npm pack
 dsh plugin --profile web add "K:\Code\Tools\dsh-plugins\dsh-vocechat-bridge"
 ```
 
-也可以把 `dsh-vocechat-bridge-0.1.0.tgz` 交给 DSH 插件安装器。安装与配置后重启对应 DSH profile。开发链接安装时，宿主依赖必须能从插件的真实路径解析；遵循宿主安装器解析 peer dependencies 的方式，若手工建立依赖链接，指向实际 profile 的 `node_modules/@deepseek-ai`，不要复制凭据文件。
+也可以把 `dsh-vocechat-bridge-0.2.0.tgz` 交给 DSH 插件安装器。安装与配置后重启对应 DSH profile。开发链接安装时，宿主依赖必须能从插件的真实路径解析；遵循宿主安装器解析 peer dependencies 的方式，若手工建立依赖链接，指向实际 profile 的 `node_modules/@deepseek-ai`，不要复制凭据文件。
 
 本次交付没有执行上述安装命令，也没有变更已运行的 profile。`npm ci --legacy-peer-deps` 用于独立开发和测试；运行插件时三个 peer dependency 由 DSH 提供。
 
@@ -44,11 +44,13 @@ VoceChat 后台的 **16 字节 secret 是可选的消息加密设置**，留空�
 | `targetSessionId`, `agentPreset` | 固定已有会话；preset 留空时从持久会话恢复 |
 | `autoReply`, `allowProactive` | `true`, `false`；普通回复自动发送最终 step 文本；主动发送需要显式启用 |
 | `allowedLocalRoots`, `allowedRemoteOrigins` | 均 `[]`，默认禁止 Agent 出站本地/远程媒体；配置只允许需要的目录及精确 HTTP(S) origin |
-| `requestTimeoutMs`, `turnTimeoutMs` | `30000`, `180000`，分别控制 API 及等待会话完成（含等待宿主空闲） |
+| `requestTimeoutMs`, `turnTimeoutMs` | `30000`, `180000`，分别控制 API 及实际提交后的会话轮次；等待共享 Session 空闲不消耗 turnTimeoutMs |
 | `maxMediaBytes`, `maxAudioSeconds` | `26214400`, `300`，检查实际字节及音频时长 |
 | `maxBodyBytes`, `maxTextChars` | `262144`, `16000`，拒绝过大入站，不静默截断 |
 | `textSegmentChars` | `2000`，按 Unicode code point 分段发长文本 |
-| `mergeWindowMs`, `maxBatch` | `300`, `10`；按首条入队时间形成固定合并窗口，只合并同一发送者、同一目标的相邻消息 |
+| `privateQuietMs`, `groupQuietMs` | `4000`, `1500`；私聊/群聊静默防抖，新消息重置本缓冲区计时 |
+| `maxWaitMs`, `maxBatch` | `12000`, `10`；从批次首条消息起最长等待 12 秒；达到条数上限也会提前封批 |
+| `mergeWindowMs` | 旧配置兼容项，默认 `0` 停用；非零时覆盖两类静默时长，升级后建议删除此旧字段 |
 | `maxQueue`, `maxHistory` | `200`, `5000`；队列满返回 503；完成记录及去重窗口受历史条数上限限制 |
 | `statePath`, `tempDir` | 默认 `$DSH_HOME/vocechat-bridge/state.json` 与 `tmp`；没有 DSH_HOME 则用用户 `.dsh` |
 | `dedupTtlMs`, `retentionMs` | 均 `86400000`；消息记录保留两者较大值，历史条数仍有上限；媒体任务结束即清临时文件 |
@@ -98,7 +100,13 @@ VoceChat 后台的 **16 字节 secret 是可选的消息加密设置**，留空�
 
 每条合法消息先写状态文件再返回 202；重复或被过滤事件返回 202，非法事件 400、鉴权失败 401、体积超限 413、队列满或状态写入失败 503。VoceChat 是否重试失败 Webhook 由服务端决定；插件不能代替服务端保存尚未接收的事件。
 
-`pending` 会在启动时恢复；`processing` 重启后变为 `uncertain`。会话已经排队、输出或发送超时的情况也可能是不确定状态，不能自动重放。通过状态文件的消息 ID 与 VoceChat/DSH 记录核查后处理。媒体处理前失败记 `failed` 并保留安全错误码。不要在运行时手工修改状态文件，也不要把同一个状态文件交给多个插件实例。
+Webhook 在本地持久化每条消息与所属缓冲区后才返回 202。缓冲键包含 VoceChat 服务/Bot、频道、目标 DSH Session、私聊/群聊目标和发送者；不同发送者不能合并。同一键的消息即使与其他来源交错到达，也按原始接收顺序合并。重复 ID 不入缓冲、不重置计时，也不触发第二次回复。
+
+静默截止时间为 `min(末条接收时间 + 静默时长, 首条接收时间 + maxWaitMs)`。到期即持久化为不可追加的待提交批次；DSH 忙时独立计时仍继续，封批后排队。附件下载、ASR 和等待 DSH 空闲可能继续耗时，12 秒限制的是收集消息的防抖窗口。完整算法与状态说明见 [DEBOUNCE.md](DEBOUNCE.md)。
+
+`pending` 消息及缓冲的首条/末条时间、截止时间、批次边界会在启动时恢复，不重新计算一整段等待。未提交的媒体准备与 ASR 结果可恢复；只有实际提交前才落盘 `dispatching`。该阶段崩溃后记为 `uncertain`，不自动重放。处理完成后从完成时间继续保留去重记录，受 `dedupTtlMs`、保留时间和 `maxHistory` 上限约束。
+
+恢复时保留原会话归属；更换 Session、服务/Bot 或收紧白名单后，不匹配的批次继续保留并计入状态工具的 `blockedBatches`，不会投给新目标。状态格式自动从 v1 升级为 v2，升级与回滚前先备份，见防抖文档。不要在运行时手工修改状态文件，也不要把同一个状态文件交给多个插件实例。
 
 临时目录仅清理插件生成的 `job-UUID` 子目录；任务结束立即删除，启动和周期扫描清理过期残留，并跳过活动任务。原始媒体存入 DSH durable attachment 后按宿主的附件保留规则管理。状态文件含聊天正文与来源，应该按聊天数据保护其目录权限。
 

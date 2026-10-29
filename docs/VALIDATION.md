@@ -4,15 +4,16 @@
 
 ## 自动化与本机运行
 
-`npm run check`：TypeScript 严格编译通过，**66 项自动化测试通过，0 失败，0 跳过**。
+`npm run check`：TypeScript 严格编译通过，**95 项自动化测试通过，0 失败，0 跳过**。
 
 | 套件 | 数量 | 验证内容 |
 | --- | ---: | --- |
 | `audio.test.ts` | 15 | 文件 magic、WAV 实际时长、压缩格式探测、大小/时长限制、multipart ASR、无鉴权本地服务、HTTP/连接/格式错误、超时取消、凭据去敏、真实 FFmpeg 转码及清理 |
-| `bridge.test.ts` | 22 | Webhook 无鉴权 GET 验证与 POST 鉴权、实际 HTTP 文本与显式 Markdown 出站、私聊/群聊、白名单/自消息/去重、持久 ACK、并发与合并、背压、语音成功失败、图片/文件入站、文字+多图片+音频+文件组合出站、部分成功、禁用/重启、请求取消、未完成 ACK 写入的停止屏障、活动临时文件保护 |
-| `dsh.test.ts` | 14 | 固定 Session、宿主忙碌队列、消息 ID/turn 归属、其他渠道混入、原生附件、冷恢复模型/preset、lease 释放、工具来源身份、quiet、失败与取消 |
+| `bridge.test.ts` | 31 | Webhook 无鉴权 GET 验证与 POST 鉴权、文本/Markdown 出站、私聊/群聊、白名单/去重、持久 ACK、防抖与忙碌封批、背压、语音成功失败、图片/文件入站、组合发送、部分成功、停止屏障、崩溃前转写缓存、目标会话变更隔离及长期缓冲去重 |
+| `dsh.test.ts` | 19 | 固定 Session、宿主忙碌队列、单批单条用户消息、提交屏障与超时边界、消息 ID/turn 归属、其他渠道混入、原生附件、冷恢复模型/preset、lease 释放、工具来源身份、quiet、失败与取消 |
 | `vocechat.test.ts` | 12 | 官方端点、原生 Markdown 及格式校验、Base64 X-Properties、实际 multipart 字节、音频 415 降级、资源路径、本地 realpath 白名单、格式/大小/上传异常、公网地址与 origin 拒绝、禁止重定向、响应流超时 |
-| `live-webhook.test.ts` | 3 | 隔离接收程序的 GET/POST 行为、请求诊断记录脱敏、禁止真实 DSH/ASR/发送、默认不下载媒体、显式启用后的 Mock 下载与实际音频格式/时长报告、显式明文审计模式 |
+| `live-webhook.test.ts` | 4 | 隔离接收程序的 GET/POST 行为、诊断记录脱敏、禁止真实 DSH/ASR/发送、媒体开关与音频探测、明文审计，以及终止子进程后的缓冲恢复/重复投递 |
+| `debounce.test.ts` | 14 | 固定时间验证 4s/1.5s/12s 默认值、静默重置、最长等待、独立键与交错顺序、封批上限、磁盘时间戳/附件/ASR 保留、提交前恢复、提交后隔离、v1 升级及完成后去重保留 |
 
 测试启动真实的本地 HTTP Mock VoceChat/ASR 服务，使用假的 DSH 会话进行闭环。没有把 Mock 的固定转写结果当成真实语音识别能力。ASR provider 确实发送 multipart 文件并解析服务响应，但本次没有启动 Whisper 模型或请求云端模型。
 
@@ -75,7 +76,7 @@
 4. 图片理解依赖目标模型的图片输入能力；DSH 本版本没有原生 audio block，采用转写文本加原音频文件。TTS、阿里百炼专用协议和 Qwen Omni 仅预留 Provider 扩展点，当前内置运行的 ASR 协议为兼容 `/audio/transcriptions` 的服务。
 5. Webhook ACK 与发送 API 之间没有分布式事务。网络断开可能出现服务端已发送而客户端未确认；已入队/已启动 turn 的不确定结果不自动重试。断电级别持久化和严格 exactly-once 不在本版保证范围内。
 6. 去重使用全局 VoceChat mid，受 `dedupTtlMs` 与 `maxHistory` 限制；不要让多个 Bot/多个进程共用同一个 statePath。群白名单授权整个群，需更细限制时配置 groupSenderWhitelist。
-7. 固定 Session 的 Web/QQ 队列若持续繁忙，桥接可能在 `turnTimeoutMs` 内未能投递而记为 uncertain；不会抢占。其他渠道主动 steer 造成同轮来源混合时，本插件停止外发。
+7. 固定 Session 的 Web/QQ 队列若持续繁忙，已封批消息继续排队，不抢占，也不消耗本轮 turnTimeoutMs。实际提交后的超时或崩溃仍会隔离为 uncertain；其他渠道主动 steer 造成同轮来源混合时停止外发。
 8. ASR/VoceChat API 基址是管理员配置，允许内网自托管地址。远程出站媒体只允许配置的公网 origin；不支持出站媒体的私网 URL、重定向或 HTTP 代理自定义路由。
 9. 取消/禁用只停止桥接等待和发送，不取消共享 Agent。已经入队的 Agent 工作可能继续完成，不会在桥接停止后自动转发结果。
 10. 状态文件保留必要聊天内容；DSH durable attachments 由宿主保留。自动清理仅处理插件临时目录，管理聊天历史与宿主附件仍遵循 DSH 规则。

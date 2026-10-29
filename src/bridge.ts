@@ -4,26 +4,23 @@ import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseConfig, allowedDestination, type BridgeConfig } from './config.ts';
 import { normalizeWebhook } from './inbound.ts';
-import { StateStore, type Job } from './state.ts';
+import { StateStore, batchPhases, type Job, type Batch, type BufferScope } from './state.ts';
+import { DebounceBuffer } from './debounce.ts';
 import { VoceChatClient } from './vocechat.ts';
 import { AudioError, OpenAICompatibleAsr, probeAudio } from './audio.ts';
 import type { Destination, OutboundMessage, PreparedMessage, SessionPort, CredentialResolver, Logger } from './types.ts';
 
 const silent: Logger = {debug(){},info(){},warn(){},error(){}};
-const delay = (ms: number, signal: AbortSignal) => new Promise<void>((resolve,reject) => {
-  if (signal.aborted) return reject(new Error('STOPPED'));
-  const done = () => { signal.removeEventListener('abort',abort); resolve(); };
-  const timer = setTimeout(done,ms);
-  const abort = () => { clearTimeout(timer); reject(new Error('STOPPED')); };
-  signal.addEventListener('abort',abort,{once:true});
-});
 export class Bridge {
   readonly config: BridgeConfig;
   readonly store: StateStore;
   readonly client: VoceChatClient;
+  private buffer: DebounceBuffer;
   private server?: Server;
   private controller = new AbortController();
   private worker?: Promise<void>;
+  private debounceTimer?: ReturnType<typeof setTimeout>;
+  private sealing?: Promise<void>;
   private running = false;
   private log: Logger;
   private outbound: Promise<unknown> = Promise.resolve();
@@ -35,6 +32,7 @@ export class Bridge {
     this.ports=ports;
     this.config = parseConfig(config);
     this.store = new StateStore(this.config.statePath, Math.max(this.config.retentionMs,this.config.dedupTtlMs),this.config.maxHistory);
+    this.buffer = new DebounceBuffer(this.store,this.config);
     this.log = ports.logger || silent;
     this.client = new VoceChatClient({
       baseUrl:this.config.baseUrl || 'http://127.0.0.1', resolveApiKey:async()=> {
@@ -47,6 +45,14 @@ export class Bridge {
     if (this.running || !this.config.enabled) return;
     if (!await this.ports.resolveCredential(this.config.webhookSecretRef) || !await this.ports.resolveCredential(this.config.botApiKeyRef)) throw new Error('BRIDGE_CREDENTIAL_MISSING');
     await this.store.load();
+    await this.store.transaction(async()=>{
+      for(const job of this.store.jobs) {
+        job.sourceKey ??= this.sourceKey();job.channel ??= 'vocechat';job.sessionId ??= this.config.targetSessionId;
+      }
+      this.buffer.restorePending(job=>this.scopeFor(job));
+      this.buffer.sealDue(Date.now());
+      await this.store.save();
+    });
     await mkdir(this.config.tempDir,{recursive:true,mode:0o700});
     await this.cleanup();
     this.controller = new AbortController();
@@ -59,19 +65,20 @@ export class Bridge {
       server.once('error',reject); server.listen(this.config.webhookPort,this.config.webhookHost,()=>{server.off('error',reject);resolve();});
     });
     server.on('error',()=>{this.failure='WEBHOOK_SERVER_ERROR';this.log.error(this.failure);});
-    this.server=server; this.running=true; this.failure=undefined; this.kick();
+    this.server=server; this.running=true; this.failure=undefined; this.schedule();
     this.cleanupTimer=setInterval(()=>{void this.cleanup().catch(()=>this.log.warn('TEMP_CLEANUP_FAILED'));},Math.max(1000,Math.min(this.config.retentionMs,3600_000)));
     this.cleanupTimer.unref();
     this.log.info('VoceChat bridge started');
   }
   async stop() {
     this.running=false; this.controller.abort();
+    clearTimeout(this.debounceTimer);this.debounceTimer=undefined;
     clearInterval(this.cleanupTimer);this.cleanupTimer=undefined;
     if (this.server) {
       const server=this.server; this.server=undefined;
       await new Promise<void>(resolve => {server.close(()=>resolve());server.closeAllConnections();});
     }
-    await this.worker;
+    await this.sealing;await this.worker;
     await this.outbound.catch(()=>{});
     // A disconnected webhook can still be completing its durable ACK write.
     // Drain the store lock before a replacement instance can open this file.
@@ -79,7 +86,10 @@ export class Bridge {
   }
   status() {
     return {enabled:this.config.enabled,running:this.running,address:this.server?.address(),failure:this.failure,
-      sessionId:this.config.targetSessionId,counts:Object.fromEntries(['pending','processing','done','failed','uncertain'].map(s=>[s,this.store.jobs.filter(j=>j.status===s).length]))};
+      sessionId:this.config.targetSessionId,counts:Object.fromEntries(['pending','processing','done','failed','uncertain'].map(s=>[s,this.store.jobs.filter(j=>j.status===s).length])),
+      batchCounts:Object.fromEntries(batchPhases.map(p=>[p,this.store.batches.filter(b=>b.phase===p).length])),
+      blockedBatches:this.store.batches.filter(b=>['buffering','ready'].includes(b.phase)&&!this.canDispatch(b)).length,
+      nextFlushAt:this.buffer.nextDeadline(),debounce:{privateQuietMs:this.config.privateQuietMs,groupQuietMs:this.config.groupQuietMs,maxWaitMs:this.config.maxWaitMs}};
   }
   private async handleHttp(req:HttpRequest,res:import('node:http').ServerResponse) {
     const url=new URL(req.url || '/', 'http://localhost');
@@ -111,57 +121,111 @@ export class Bridge {
     if(rawTarget?.uid && rawTarget.uid!==c.botUid)return 'ignored';
     if(!message || message.senderId===c.botUid || !allowedDestination(c,message.destination) || (message.destination.kind==='group' && c.groupSenderWhitelist.length && !c.groupSenderWhitelist.includes(message.senderId))) return 'ignored';
     if(message.text.length>c.maxTextChars || message.attachments.some(a=>(a.size??0)>c.maxMediaBytes)) throw new Error('MESSAGE_TOO_LARGE');
+    const receivedAt=Date.now();
     const result=await this.store.transaction(async()=>{
       if(!this.running)return 'ignored' as const;
-      if(this.store.jobs.some(j=>j.message.id===message.id && (j.status==='pending'||j.status==='processing'||j.acceptedAt>Date.now()-c.dedupTtlMs))) return 'duplicate' as const;
+      if(this.store.jobs.some(j=>j.message.id===message.id && j.sourceKey===this.sourceKey() && (j.status==='pending'||j.status==='processing'||(j.finishedAt??j.acceptedAt)>Date.now()-c.dedupTtlMs))) return 'duplicate' as const;
       if(this.store.jobs.filter(j=>j.status==='pending'||j.status==='processing').length>=c.maxQueue) return 'full' as const;
-      const job:Job={message,acceptedAt:Date.now(),status:'pending'};this.store.jobs.push(job);
-      try{await this.store.save();}catch{this.store.jobs=this.store.jobs.filter(j=>j!==job);throw new Error('STATE_WRITE_FAILED');}
+      const previousJobs=this.store.jobs.slice(),previousBatches=this.store.batches.slice();
+      const batchValues=previousBatches.map(b=>[b,structuredClone(b)] as const);
+      const job:Job={id:randomUUID(),message,acceptedAt:receivedAt,status:'pending',sourceKey:this.sourceKey(),channel:'vocechat',sessionId:c.targetSessionId};
+      try {
+        this.store.jobs.push(job);this.buffer.enqueue(job,this.scopeFor(job));
+        await this.store.save();
+      }catch{
+        this.store.jobs=previousJobs;this.store.batches=previousBatches;
+        for(const [batch,value] of batchValues){for(const key of Object.keys(batch))delete (batch as any)[key];Object.assign(batch,value);}
+        throw new Error('STATE_WRITE_FAILED');
+      }
       return 'accepted' as const;
     });
-    if(result==='accepted') this.kick();return result;
+    if(result==='accepted') this.schedule();return result;
+  }
+  private sourceKey() {return JSON.stringify([this.config.baseUrl,this.config.botUid]);}
+  private scopeFor(job:Job):BufferScope {
+    return {sourceKey:job.sourceKey??this.sourceKey(),channel:job.channel??'vocechat',sessionId:job.sessionId??this.config.targetSessionId,
+      destination:{...job.message.destination},senderId:job.message.senderId};
+  }
+  private canDispatch(batch:Batch) {
+    const s=batch.scope,c=this.config;
+    return s.sourceKey===this.sourceKey()&&s.channel==='vocechat'&&s.sessionId===c.targetSessionId&&allowedDestination(c,s.destination)&&
+      (s.destination.kind!=='group'||!c.groupSenderWhitelist.length||c.groupSenderWhitelist.includes(s.senderId));
+  }
+  private schedule() {
+    clearTimeout(this.debounceTimer);this.debounceTimer=undefined;
+    if(!this.running||this.failure)return;
+    this.kick();
+    if(this.sealing)return;
+    const due=this.buffer.nextDeadline();
+    if(due===undefined)return;
+    this.debounceTimer=setTimeout(()=>{
+      this.debounceTimer=undefined;
+      this.sealing=this.store.transaction(async()=>{
+        if(!this.running)return;
+        if(this.buffer.sealDue(Date.now()).length)await this.store.save();
+      }).catch(()=>{this.failure='BUFFER_WRITE_FAILED';this.log.error(this.failure);})
+        .finally(()=>{this.sealing=undefined;this.schedule();});
+    },Math.max(0,due-Date.now()));
   }
   private kick() {
-    if(this.worker || !this.running)return;
-    this.worker=this.drain().catch(()=>{this.failure='QUEUE_ERROR';this.log.error(this.failure);}).finally(()=>{this.worker=undefined;if(this.running && !this.failure && this.store.jobs.some(j=>j.status==='pending'))this.kick();});
+    if(this.worker || !this.running || !this.buffer.nextReady(b=>this.canDispatch(b)))return;
+    this.worker=this.drain().catch(()=>{this.failure='QUEUE_ERROR';this.log.error(this.failure);}).finally(()=>{this.worker=undefined;this.schedule();});
   }
   private async drain() {
     const signal=this.controller.signal;
     while(this.running && !signal.aborted) {
-      const first=this.store.jobs.find(j=>j.status==='pending');if(!first)return;
-      const wait=Math.max(0,first.acceptedAt+this.config.mergeWindowMs-Date.now());
-      try{if(wait)await delay(wait,signal);}catch{return;}
-      const jobs:Job[]=[];
-      for(const j of this.store.jobs.filter(j=>j.status==='pending')) {
-        if(jobs.length>=this.config.maxBatch || j.message.destination.kind!==first.message.destination.kind || j.message.destination.id!==first.message.destination.id || j.message.senderId!==first.message.senderId)break;
-        jobs.push(j);
-      }
-      await this.store.transaction(async()=>{jobs.forEach(j=>j.status='processing');await this.store.save();});
+      const batch=await this.store.transaction(async()=>{
+        if(!this.running)return undefined;
+        const next=this.buffer.nextReady(b=>this.canDispatch(b));if(!next)return undefined;
+        next.phase='preparing';delete next.code;await this.store.save();return next;
+      });
+      if(!batch)return;
+      const jobs=this.buffer.jobs(batch);
       const dir=join(this.config.tempDir,`job-${randomUUID()}`);
       this.activeTempDirs.add(dir);
-      let enteredSession=false;
+      let submitted=false;
+      let submission:Promise<void>|undefined;
+      const beforeSubmit=()=>submission??=(async()=>{
+        await this.store.transaction(async()=>{
+          signal.throwIfAborted();
+          batch.phase='dispatching';jobs.forEach(j=>j.status='processing');await this.store.save();
+        });
+        submitted=true;
+      })();
       try {
         await mkdir(dir,{recursive:true,mode:0o700});
         const prepared:PreparedMessage[]=[];
-        for(const job of jobs)prepared.push(await this.prepare(job.message,dir,signal));
-        signal.throwIfAborted();enteredSession=true;
-        const result=await this.ports.session.run(prepared,signal);
-        if(this.config.autoReply && !result.sent && !result.quiet && result.text?.trim()) await this.send(first.message.destination,{text:result.text}, {signal});
-        jobs.forEach(j=>{j.status='done';delete j.code;});
+        for(const job of jobs)prepared.push(await this.prepare(job,dir,signal));
+        signal.throwIfAborted();
+        if(!this.ports.session.supportsSubmissionBarrier)await beforeSubmit();
+        const result=await this.ports.session.run(prepared,signal,{beforeSubmit});
+        if(!submitted)throw new Error('SESSION_SUBMISSION_NOT_RECORDED');
+        if(this.config.autoReply && !result.sent && !result.quiet && result.text?.trim()) await this.send(batch.scope.destination,{text:result.text}, {signal});
+        await this.store.transaction(async()=>{
+          batch.phase='done';delete batch.code;
+          jobs.forEach(j=>{j.status='done';j.finishedAt=Date.now();delete j.code;});
+          await this.store.save();
+        });
       } catch (cause) {
         const detail=cause instanceof AudioError?cause.code:cause instanceof Error && /^[A-Z][A-Z0-9_]{2,64}$/.test(cause.message)?cause.message:undefined;
-        jobs.forEach(j=>{j.status=enteredSession?'uncertain':'failed';j.code=signal.aborted?'STOPPED':detail || (enteredSession?'TURN_OR_REPLY_FAILED':'MEDIA_PROCESSING_FAILED');});
+        const interruptedBeforeSubmit=signal.aborted&&!submitted;
+        await this.store.transaction(async()=>{
+          batch.phase=interruptedBeforeSubmit?'ready':submitted?'uncertain':'failed';
+          batch.code=signal.aborted?'STOPPED':detail || (submitted?'TURN_OR_REPLY_FAILED':'MEDIA_PROCESSING_FAILED');
+          jobs.forEach(j=>{j.status=interruptedBeforeSubmit?'pending':submitted?'uncertain':'failed';j.code=batch.code;if(interruptedBeforeSubmit)delete j.finishedAt;else j.finishedAt=Date.now();});
+          await this.store.save();
+        });
         this.log.warn(jobs[0].code!);
       } finally {
         await rm(dir,{recursive:true,force:true});
         this.activeTempDirs.delete(dir);
-        await this.store.transaction(()=>this.store.save());
       }
     }
   }
-  private async prepare(message:Job['message'],dir:string,signal:AbortSignal):Promise<PreparedMessage> {
+  private async prepare(job:Job,dir:string,signal:AbortSignal):Promise<PreparedMessage> {
+    const message=job.message;
     const attachments:PreparedMessage['attachments']=[];
-    for(const attachment of message.attachments) {
+    for(const [index,attachment] of message.attachments.entries()) {
       signal.throwIfAborted();
       const bytes=await this.client.download(attachment.path,attachment.name,signal);
       if(attachment.kind==='image' && !['image/png','image/jpeg','image/webp','image/gif'].includes(bytes.contentType))throw new Error('IMAGE_CONTENT_TYPE_MISMATCH');
@@ -171,14 +235,19 @@ export class Bridge {
       const a={...attachment,localPath};attachments.push(a);
       if(a.kind==='audio') {
         await probeAudio({path:localPath,name:a.name,mime:a.mime},{maxBytes:this.config.maxMediaBytes,maxDurationSeconds:this.config.maxAudioSeconds,timeoutMs:this.config.requestTimeoutMs,ffmpegPath:this.config.ffmpegPath,ffprobePath:this.config.ffprobePath,tempDir:dir},signal);
-        if(this.config.asrEnabled) {
+        const cached=job.preparedAudio?.[index];
+        if(cached)Object.assign(a,cached);
+        else if(this.config.asrEnabled) {
           const provider=new OpenAICompatibleAsr({baseUrl:this.config.asrBaseUrl,model:this.config.asrModel,
             acceptedFormats:this.config.asrAcceptedFormats,
             resolveApiKey:()=>this.ports.resolveCredential(this.config.asrApiKeyRef),language:this.config.asrLanguage || undefined,
             timeoutMs:this.config.asrTimeoutMs,maxBytes:this.config.maxMediaBytes,maxDurationSeconds:this.config.maxAudioSeconds,
             ffmpegPath:this.config.ffmpegPath,ffprobePath:this.config.ffprobePath,tempDir:dir});
-          try{const transcript=await provider.transcribe({path:localPath,name:a.name,mime:a.mime},signal);Object.assign(a,{transcript:transcript.text});}
-          catch(error){const code=error instanceof AudioError?error.code:'ASR_FAILED';Object.assign(a,{error:code});this.log.warn(code);}
+          let result:{transcript?:string;error?:string};
+          try{const transcript=await provider.transcribe({path:localPath,name:a.name,mime:a.mime},signal);result={transcript:transcript.text};}
+          catch(error){if(signal.aborted)throw error;const code=error instanceof AudioError?error.code:'ASR_FAILED';result={error:code};this.log.warn(code);}
+          Object.assign(a,result);
+          await this.store.transaction(async()=>{job.preparedAudio??={};job.preparedAudio[index]=result;await this.store.save();});
         }
       }
     }

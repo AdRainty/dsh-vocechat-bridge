@@ -10,7 +10,8 @@ export const defaults = {
   statePath: '', tempDir: '', allowedLocalRoots: [] as string[], allowedRemoteOrigins: [] as string[],
   requestTimeoutMs: 30_000, turnTimeoutMs: 180_000, maxMediaBytes: 25 * 1024 * 1024,
   maxAudioSeconds: 300, maxBodyBytes: 256 * 1024, maxQueue: 200, maxTextChars: 16000,
-  textSegmentChars: 2000, mergeWindowMs: 300, maxBatch: 10, dedupTtlMs: 24 * 3600_000,
+  textSegmentChars: 2000, privateQuietMs: 4000, groupQuietMs: 1500, maxWaitMs: 12000,
+  mergeWindowMs: 0, maxBatch: 10, dedupTtlMs: 24 * 3600_000,
   retentionMs: 24 * 3600_000, maxHistory: 5000, logLevel: 'info',
   asrEnabled: false, asrBaseUrl: '', asrModel: 'whisper-1', asrApiKeyRef: '', asrLanguage: '',
   asrAcceptedFormats: ['wav','mp3','ogg','m4a','flac','webm'] as AudioFormat[],
@@ -36,10 +37,14 @@ export function parseConfig(input: Partial<BridgeConfig> = {}): BridgeConfig {
     if (typeof defaults[key] === 'string' && typeof c[key] !== 'string') throw new Error(`Invalid config: ${key}`);
     if (typeof defaults[key] === 'number' && (!Number.isSafeInteger(c[key]) || (c[key] as number) < 0)) throw new Error(`Invalid config: ${key}`);
   }
-  for (const key of ['requestTimeoutMs','turnTimeoutMs','maxMediaBytes','maxAudioSeconds','maxBodyBytes','maxQueue','maxTextChars','textSegmentChars','maxBatch','maxHistory','dedupTtlMs','retentionMs','asrTimeoutMs'] as const) {
+  for (const key of ['requestTimeoutMs','turnTimeoutMs','maxMediaBytes','maxAudioSeconds','maxBodyBytes','maxQueue','maxTextChars','textSegmentChars','maxBatch','maxHistory','dedupTtlMs','retentionMs','asrTimeoutMs','maxWaitMs'] as const) {
     if (c[key] < 1) throw new Error(`Invalid config: ${key}`);
   }
   if (c.webhookPort > 65535 || !/^\/[\w/-]+$/.test(c.webhookPath) || c.mergeWindowMs > 60_000 || c.maxBatch > 100 || !['debug','info','warn','error'].includes(c.logLevel)) throw new Error('Invalid webhook/batch/log config');
+  if (c.privateQuietMs > 3600_000 || c.groupQuietMs > 3600_000 || c.maxWaitMs > 3600_000) throw new Error('Invalid debounce limits');
+  // Nonzero legacy values explicitly override both quiet periods. Zero disables
+  // this compatibility alias; new configurations use the fields above.
+  if (c.mergeWindowMs) c.privateQuietMs = c.groupQuietMs = c.mergeWindowMs;
   for (const key of ['baseUrl','asrBaseUrl'] as const) {
     if (!c[key]) continue;
     const u = new URL(c[key]);

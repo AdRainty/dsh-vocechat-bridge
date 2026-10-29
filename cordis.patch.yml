@@ -13,5 +13,8 @@
         webhookPath: /vocehook
         userWhitelist: []
         groupWhitelist: []
+        privateQuietMs: 4000
+        groupQuietMs: 1500
+        maxWaitMs: 12000
         asrEnabled: false
         allowProactive: false

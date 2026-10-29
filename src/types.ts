@@ -8,8 +8,10 @@ export type PreparedAttachment = IncomingAttachment & { localPath?: string; tran
 export type PreparedMessage = Omit<IncomingMessage, 'attachments'> & { attachments: PreparedAttachment[] };
 export type OutgoingAttachment = { kind: 'image' | 'audio' | 'file'; path?: string; url?: string; name?: string; mime?: string };
 export type OutboundMessage = { text?: string; format?: 'plain' | 'markdown'; attachments?: OutgoingAttachment[]; replyTo?: number };
+export type SessionRunOptions = { beforeSubmit: () => Promise<void> };
 export interface SessionPort {
-  run(messages: PreparedMessage[], signal: AbortSignal): Promise<{ text?: string; sent?: boolean; quiet?: boolean }>;
+  supportsSubmissionBarrier?: boolean;
+  run(messages: PreparedMessage[], signal: AbortSignal, options?: SessionRunOptions): Promise<{ text?: string; sent?: boolean; quiet?: boolean }>;
   dispose?(): void;
 }
 export type CredentialResolver = (ref: string) => Promise<string | undefined>;

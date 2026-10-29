@@ -30,7 +30,9 @@
     maxHistory: 5000
     maxTextChars: 16000
     textSegmentChars: 2000
-    mergeWindowMs: 300
+    privateQuietMs: 4000
+    groupQuietMs: 1500
+    maxWaitMs: 12000
     maxBatch: 10
     dedupTtlMs: 86400000
     retentionMs: 86400000

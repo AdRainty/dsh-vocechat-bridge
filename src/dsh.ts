@@ -1,5 +1,5 @@
 import { readFile, stat } from 'node:fs/promises';
-import type { Destination, PreparedMessage, SessionPort } from './types.ts';
+import type { Destination, PreparedMessage, SessionPort, SessionRunOptions } from './types.ts';
 
 /** Narrow structural views of the verified DSH 0.2.1-rc.3 capabilities. */
 export interface HostAgent {
@@ -36,6 +36,7 @@ const sameDestination = (a: Destination, b: Destination) => a.kind === b.kind &&
 
 /** Uses the host's one driver; never steers or cancels a shared channel's turn. */
 export class DshSessionPort implements SessionPort {
+  readonly supportsSubmissionBarrier = true;
   private active?: ActiveRun;
   private tail: Promise<unknown> = Promise.resolve();
   private disposed = false;
@@ -90,8 +91,8 @@ export class DshSessionPort implements SessionPort {
       ...(selected.reasoningEffort === undefined ? {} : { reasoningEffort: selected.reasoningEffort }) }, preset };
   }
 
-  run(messages: PreparedMessage[], signal: AbortSignal) {
-    const operation = this.tail.then(() => this.perform(messages, signal));
+  run(messages: PreparedMessage[], signal: AbortSignal, options?: SessionRunOptions) {
+    const operation = this.tail.then(() => this.perform(messages, signal, options));
     this.tail = operation.catch(() => {});
     return operation;
   }
@@ -179,20 +180,24 @@ export class DshSessionPort implements SessionPort {
     return content.length ? content : [{ type: 'text', text: '' }];
   }
 
-  private async perform(messages: PreparedMessage[], outerSignal: AbortSignal): Promise<{ text?: string; sent?: boolean; quiet?: boolean }> {
+  private async perform(messages: PreparedMessage[], outerSignal: AbortSignal, options?: SessionRunOptions): Promise<{ text?: string; sent?: boolean; quiet?: boolean }> {
     if (this.disposed) throw new Error('SESSION_DISPOSED');
     if (!messages.length) return { quiet: true };
     if (messages.some(m => !sameDestination(m.destination, messages[0].destination))) throw new Error('MIXED_DESTINATIONS');
-    const timeout = AbortSignal.timeout(this.config.turnTimeoutMs ?? 180_000);
-    const signal = AbortSignal.any([outerSignal, timeout, this.lifetime.signal]);
-    signal.throwIfAborted();
-    const agent = await abortable(this.ensureAgent(signal), signal);
+    if (messages.some(m => m.senderId!==messages[0].senderId)) throw new Error('MIXED_SENDERS');
+    const waitingSignal = AbortSignal.any([outerSignal, this.lifetime.signal]);
+    waitingSignal.throwIfAborted();
+    const agent = await abortable(this.ensureAgent(waitingSignal), waitingSignal);
     if (agent.session.id !== this.config.targetSessionId) throw new Error('SESSION_ID_MISMATCH');
-    const content = await this.content(messages, signal);
+    const content = await this.content(messages, waitingSignal);
     // whenIdle() drains every currently queued Web/QQ turn; followup itself is
     // void and only inserts into the next-turn inbox, so awaiting it is wrong.
-    await abortable(agent.whenIdle(), signal);
-    signal.throwIfAborted();
+    await abortable(agent.whenIdle(), waitingSignal);
+    waitingSignal.throwIfAborted();
+    await options?.beforeSubmit();
+    waitingSignal.throwIfAborted();
+    // A busy shared session does not consume this turn's timeout budget.
+    const signal = AbortSignal.any([waitingSignal, AbortSignal.timeout(this.config.turnTimeoutMs ?? 180_000)]);
     const input = this.dependencies.createUserMessage({ content, source: {
       kind: 'plugin:dsh-vocechat-bridge', channel: 'vocechat',
       destination: messages[0].destination,
@@ -219,7 +224,12 @@ export class DshSessionPort implements SessionPort {
         stop = this.ctx.on('session/event', (session: any, event: any) => {
           if (session.id !== this.config.targetSessionId) return;
           const data = event.data ?? {};
-          if (event.type === 'turn/start') { run.currentTurn = data.turn; return; }
+          if (event.type === 'turn/start') {
+            // Another queued channel may run before our followup. Its source
+            // flags belong to that turn; only mixing within our turn closes it.
+            if(run.turn===undefined)run.contaminated=false;
+            run.currentTurn = data.turn; return;
+          }
           if (event.type === 'user/message') {
             const message = data.message ?? data;
             if (message.id === run.messageId) { run.turn = run.currentTurn; return; }

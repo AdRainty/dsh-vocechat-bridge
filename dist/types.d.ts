@@ -38,8 +38,12 @@ export type OutboundMessage = {
     attachments?: OutgoingAttachment[];
     replyTo?: number;
 };
+export type SessionRunOptions = {
+    beforeSubmit: () => Promise<void>;
+};
 export interface SessionPort {
-    run(messages: PreparedMessage[], signal: AbortSignal): Promise<{
+    supportsSubmissionBarrier?: boolean;
+    run(messages: PreparedMessage[], signal: AbortSignal, options?: SessionRunOptions): Promise<{
         text?: string;
         sent?: boolean;
         quiet?: boolean;

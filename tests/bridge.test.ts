@@ -15,16 +15,17 @@ import type { PreparedMessage, SessionPort } from '../src/types.ts';
 const event=(mid:number,uid=10,gid?:number,content='hello')=>({mid,from_uid:uid,created_at:123,target:gid?{gid}:{uid:2},detail:{type:'normal',content_type:'text/plain',content}});
 const wav=()=>{const b=Buffer.alloc(44+3200);b.write('RIFF');b.writeUInt32LE(b.length-8,4);b.write('WAVEfmt ',8);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(16000,24);b.writeUInt32LE(32000,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(3200,40);return b;};
 async function waitFor(fn:()=>boolean) {for(let i=0;i<200;i++){if(fn())return;await sleep(10);}throw new Error('condition timed out');}
-async function setup(t:any, overrides:Partial<BridgeConfig>={}, run?:SessionPort['run']) {
+async function setup(t:any, overrides:Partial<BridgeConfig>={}, run?:SessionPort['run'],sessionOptions:Pick<SessionPort,'supportsSubmissionBarrier'>={}) {
   const dir=await mkdtemp(join(tmpdir(),'voce-core-'));
   const sent:{url:string;text:string;type:string}[]=[];
   const calls:PreparedMessage[][]=[];
   let asrFail=false;
+  let asrRequests=0;
   let holdSends=false;
   const api=createServer(async(req,res)=>{
     const chunks:Buffer[]=[];for await(const c of req)chunks.push(c);const body=Buffer.concat(chunks);
     if(req.url?.startsWith('/api/resource/file')){const image=req.url.includes('test_image'),file=req.url.includes('test_file');res.writeHead(200,{'content-type':image?'image/png':file?'application/pdf':'audio/wav'});res.end(image?Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII=','base64'):file?Buffer.from('%PDF-1.4 test'):wav());return;}
-    if(req.url==='/v1/audio/transcriptions'){if(asrFail){res.writeHead(503);res.end('private-provider-data');return;}res.writeHead(200,{'content-type':'application/json'});res.end('{"text":"听到的内容"}');return;}
+    if(req.url==='/v1/audio/transcriptions'){asrRequests++;if(asrFail){res.writeHead(503);res.end('private-provider-data');return;}res.writeHead(200,{'content-type':'application/json'});res.end('{"text":"听到的内容"}');return;}
     if(req.url==='/api/bot/file/prepare'){res.writeHead(200,{'content-type':'application/json'});res.end('"upload-1"');return;}
     if(req.url==='/api/bot/file/upload'){
       const start=body.indexOf('\r\n\r\n',body.indexOf('name="chunk_data"'))+4;const end=body.indexOf('\r\n--',start);
@@ -36,12 +37,12 @@ async function setup(t:any, overrides:Partial<BridgeConfig>={}, run?:SessionPort
   });
   await new Promise<void>(resolve=>api.listen(0,'127.0.0.1',resolve));
   const base=`http://127.0.0.1:${(api.address() as any).port}`;
-  const config:Partial<BridgeConfig>={enabled:true,baseUrl:base,botUid:2,targetSessionId:'session-test',userWhitelist:[10,11],groupWhitelist:[20],webhookPort:0,mergeWindowMs:10,statePath:join(dir,'state.json'),tempDir:join(dir,'tmp'),...overrides};
-  const bridge=new Bridge(config,{session:{async run(m,s){calls.push(m);return run?run(m,s):{text:'reply'};}},resolveCredential:async()=> 'test-secret'});
+  const config:Partial<BridgeConfig>={enabled:true,baseUrl:base,botUid:2,targetSessionId:'session-test',userWhitelist:[10,11],groupWhitelist:[20],webhookPort:0,privateQuietMs:10,groupQuietMs:10,maxWaitMs:1000,statePath:join(dir,'state.json'),tempDir:join(dir,'tmp'),...overrides};
+  const bridge=new Bridge(config,{session:{...sessionOptions,async run(m,s,o){calls.push(m);return run?run(m,s,o):{text:'reply'};}},resolveCredential:async()=> 'test-secret'});
   await bridge.start();
   t.after(async()=>{await bridge.stop();await new Promise<void>(r=>api.close(()=>r()));await rm(dir,{recursive:true,force:true});});
   const url=`http://127.0.0.1:${(bridge.status().address as any).port}/vocehook`;
-  return {bridge,calls,sent,url,dir,base,failAsr:()=>{asrFail=true;},holdSends:()=>{holdSends=true;}};
+  return {bridge,calls,sent,url,dir,base,failAsr:()=>{asrFail=true;},asrRequests:()=>asrRequests,holdSends:()=>{holdSends=true;}};
 }
 
 test('configuration fails closed and rejects malformed values',()=>{
@@ -85,12 +86,12 @@ test('groupSenderWhitelist restricts members inside allowed group',async t=>{
   const {bridge}=await setup(t,{groupSenderWhitelist:[11]});
   assert.equal(await bridge.accept(event(1,10,20)),'ignored');assert.equal(await bridge.accept(event(2,11,20)),'accepted');
 });
-test('contiguous messages merge without mixing sender or destination; turns never overlap',async t=>{
+test('independent buffers merge interleaved messages without mixing sender or destination; turns never overlap',async t=>{
   let active=0,max=0;
   const {bridge,calls}=await setup(t,{mergeWindowMs:30},async()=>{active++;max=Math.max(active,max);await sleep(30);active--;return {text:'ok'};});
   for(const e of [event(1),event(2),event(3,11),event(4,10,20),event(5)])await bridge.accept(e);
   await waitFor(()=>bridge.status().counts.done===5);
-  assert.deepEqual(calls.map(c=>c.map(m=>m.id)),[['1','2'],['3'],['4'],['5']]);assert.equal(max,1);
+  assert.deepEqual(calls.map(c=>c.map(m=>m.id)).sort((a,b)=>Number(a[0])-Number(b[0])),[['1','2','5'],['3'],['4']]);assert.equal(max,1);
 });
 test('queue backpressure and oversized webhook body',async t=>{
   const {bridge,url}=await setup(t,{maxQueue:1,mergeWindowMs:100,maxBodyBytes:100});
@@ -192,4 +193,96 @@ test('disabled lifecycle never listens; corrupted state fails closed without ove
   const path=join(dir,'state.json');await writeFile(path,'corrupt');
   const store=new StateStore(path,1000);await assert.rejects(store.load(),/STATE_LOAD_FAILED/);assert.equal(await readFile(path,'utf8'),'corrupt');
   const bridge=new Bridge({statePath:path},{session:{async run(){return {quiet:true};}},resolveCredential:async()=>undefined});await bridge.start();assert.equal(bridge.status().running,false);await bridge.stop();
+});
+
+test('durable webhook ACK leaves a buffering batch and does not immediately call the session',async t=>{
+  const {bridge,url,calls,dir}=await setup(t,{privateQuietMs:1000});
+  const response=await fetch(url,{method:'POST',headers:{authorization:'Bearer test-secret','content-type':'application/json'},body:JSON.stringify(event(1))});
+  assert.equal(response.status,202);assert.equal(calls.length,0);
+  const disk=JSON.parse(await readFile(join(dir,'state.json'),'utf8'));
+  assert.equal(disk.version,2);assert.equal(disk.jobs[0].message.id,'1');assert.equal(disk.batches[0].phase,'buffering');
+  assert.equal(disk.batches[0].scope.sessionId,'session-test');assert.equal(disk.batches[0].scope.channel,'vocechat');
+  await bridge.stop();
+});
+
+test('duplicate delivery does not reset the quiet deadline or cause a second reply',async t=>{
+  const {bridge,calls}=await setup(t,{privateQuietMs:100});
+  await bridge.accept(event(1));const deadline=bridge.store.batches[0].dueAt;
+  await sleep(20);assert.equal(await bridge.accept(event(1)),'duplicate');assert.equal(bridge.store.batches[0].dueAt,deadline);
+  await waitFor(()=>bridge.status().counts.done===1);
+  assert.equal(await bridge.accept(event(1)),'duplicate');assert.equal(calls.length,1);
+});
+
+test('a ready group buffer is not blocked by another sender waiting for private silence',async t=>{
+  const {bridge,calls}=await setup(t,{privateQuietMs:200,groupQuietMs:20,maxWaitMs:500});
+  await bridge.accept(event(1));await bridge.accept(event(2,11,20));
+  await waitFor(()=>calls.length>0);assert.equal(calls[0][0].destination.kind,'group');
+  await waitFor(()=>bridge.status().counts.done===2);assert.equal(calls[1][0].destination.kind,'user');
+});
+
+test('one batch preserves text, image, audio, original IDs, ordering and persisted transcription',async t=>{
+  const {bridge,calls,base}=await setup(t,{privateQuietMs:100});bridge.config.asrEnabled=true;bridge.config.asrBaseUrl=base+'/v1';
+  const picture=event(1) as any;picture.detail={type:'normal',content_type:'vocechat/file',content:'2026/10/29/test_image',properties:{content_type:'image/png',name:'test.png'}};
+  const audio=event(3) as any;audio.detail={type:'normal',content_type:'vocechat/audio',content:'2026/10/29/test_audio',properties:{content_type:'audio/wav',name:'test.wav'}};
+  await bridge.accept(picture);await bridge.accept(event(2,10,undefined,'original text'));await bridge.accept(audio);
+  await waitFor(()=>bridge.status().counts.done===3);
+  assert.equal(calls.length,1);assert.deepEqual(calls[0].map(m=>m.id),['1','2','3']);assert.equal(calls[0][1].text,'original text');
+  assert.equal(calls[0][0].attachments[0].kind,'image');assert.equal(calls[0][2].attachments[0].transcript,'听到的内容');
+  assert.equal(bridge.store.jobs.find(j=>j.message.id==='3')?.preparedAudio?.[0].transcript,'听到的内容');
+});
+
+test('buffers continue sealing while DSH is busy and frozen batches cannot absorb later arrivals',async t=>{
+  let release!:()=>void;const busy=new Promise<void>(r=>{release=r;});const submitted:string[][]=[];
+  const {bridge,calls}=await setup(t,{privateQuietMs:35,maxWaitMs:100},async(m,_s,o)=>{await busy;await o!.beforeSubmit();submitted.push(m.map(v=>v.id));return {quiet:true};},{supportsSubmissionBarrier:true});
+  await bridge.accept(event(1));await waitFor(()=>calls.length===1);
+  assert.equal(bridge.store.batches[0].phase,'preparing');assert.equal(submitted.length,0);
+  await bridge.accept(event(2));await bridge.accept(event(3));
+  await waitFor(()=>bridge.store.batches.some(b=>b.phase==='ready'));
+  await bridge.accept(event(4));await waitFor(()=>bridge.store.batches.filter(b=>b.phase==='ready').length===2);
+  assert.deepEqual(bridge.store.batches.map(b=>b.jobIds.map(id=>bridge.store.jobs.find(j=>j.id===id)!.message.id)),[['1'],['2','3'],['4']]);
+  release();await waitFor(()=>bridge.status().counts.done===4);assert.deepEqual(submitted,[['1'],['2','3'],['4']]);
+});
+
+test('stopping before submission keeps the batch retryable and restart reuses persisted ASR',async t=>{
+  let submitted=0;
+  const f=await setup(t,{},async(_m,s,_o)=>{await new Promise<void>((_r,reject)=>s.addEventListener('abort',()=>reject(new Error('STOPPED')),{once:true}));submitted++;return {quiet:true};},{supportsSubmissionBarrier:true});
+  f.bridge.config.asrEnabled=true;f.bridge.config.asrBaseUrl=f.base+'/v1';
+  const audio=event(1) as any;audio.detail={type:'normal',content_type:'vocechat/audio',content:'2026/10/29/test_audio',properties:{content_type:'audio/wav',name:'test.wav'}};
+  await f.bridge.accept(audio);await waitFor(()=>f.calls.length===1);assert.equal(f.asrRequests(),1);
+  await f.bridge.stop();assert.equal(submitted,0);assert.equal(f.bridge.store.batches[0].phase,'ready');assert.equal(f.bridge.status().counts.uncertain,0);
+  f.failAsr();const delivered:PreparedMessage[][]=[];
+  const next=new Bridge({...f.bridge.config},{session:{async run(m){delivered.push(m);return {quiet:true};}},resolveCredential:async()=> 'test-secret'});
+  t.after(()=>next.stop());await next.start();await waitFor(()=>next.status().counts.done===1);
+  assert.equal(delivered.length,1);assert.equal(delivered[0][0].attachments[0].transcript,'听到的内容');assert.equal(f.asrRequests(),1);await next.stop();
+});
+
+test('failed durable append rolls back batch membership and deadline before a webhook retry',async t=>{
+  const {bridge,calls}=await setup(t,{privateQuietMs:200});
+  await bridge.accept(event(1));const batch=bridge.store.batches[0],deadline=batch.dueAt;
+  const save=bridge.store.save.bind(bridge.store);bridge.store.save=async()=>{throw new Error('SIMULATED_WRITE_FAILURE');};
+  await assert.rejects(bridge.accept(event(2)),/STATE_WRITE_FAILED/);bridge.store.save=save;
+  assert.equal(bridge.store.jobs.length,1);assert.equal(batch.jobIds.length,1);assert.equal(batch.dueAt,deadline);
+  assert.equal(await bridge.accept(event(2)),'accepted');await waitFor(()=>bridge.status().counts.done===2);
+  assert.equal(calls.length,1);assert.deepEqual(calls[0].map(m=>m.id),['1','2']);
+});
+
+test('a changed target session cannot redirect already buffered messages',async t=>{
+  const f=await setup(t,{privateQuietMs:50});await f.bridge.accept(event(1));await f.bridge.stop();
+  const wrongCalls:PreparedMessage[][]=[];
+  const other=new Bridge({...f.bridge.config,targetSessionId:'session-other'},{session:{async run(m){wrongCalls.push(m);return {quiet:true};}},resolveCredential:async()=> 'test-secret'});
+  t.after(()=>other.stop());await other.start();await waitFor(()=>other.status().batchCounts.ready===1);
+  assert.equal(other.status().blockedBatches,1);assert.equal(wrongCalls.length,0);assert.equal(await other.accept(event(1)),'duplicate');
+  await other.accept(event(2,11));await waitFor(()=>other.status().counts.done===1);assert.equal(wrongCalls[0][0].id,'2');await other.stop();
+  const originalCalls:PreparedMessage[][]=[];
+  const original=new Bridge({...f.bridge.config},{session:{async run(m){originalCalls.push(m);return {quiet:true};}},resolveCredential:async()=> 'test-secret'});
+  t.after(()=>original.stop());await original.start();await waitFor(()=>original.status().counts.done===2);
+  assert.deepEqual(originalCalls.map(m=>m.map(v=>v.id)),[['1']]);await original.stop();
+});
+
+test('old pending messages are recovered once and retain duplicate protection after completion',async t=>{
+  const f=await setup(t);await f.bridge.stop();
+  await writeFile(join(f.dir,'state.json'),JSON.stringify({version:1,jobs:[{message:normalizeWebhook(event(9)),acceptedAt:Date.now()-3*86400000,status:'pending'}]}));
+  let calls=0;const next=new Bridge({...f.bridge.config},{session:{async run(){calls++;return {quiet:true};}},resolveCredential:async()=> 'test-secret'});
+  t.after(()=>next.stop());await next.start();await waitFor(()=>next.status().counts.done===1);
+  assert.equal(await next.accept(event(9)),'duplicate');assert.equal(calls,1);assert.ok(next.store.jobs[0].finishedAt);await next.stop();
 });

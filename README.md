@@ -1,12 +1,13 @@
 # dsh-vocechat-bridge
 
-已实现 **v0.1.0**：面向 **DSH 0.2.1-rc.3 / Node.js 22.19+** 的原生 TypeScript 插件。支持固定会话双向文字/图片/文件/已有音频、兼容服务 ASR、组合发送、来源隔离和持久化队列。默认禁用，安装不会接管旧桥接。
+已实现 **v0.2.0**：面向 **DSH 0.2.1-rc.3 / Node.js 22.19+** 的原生 TypeScript 插件。支持固定会话双向文字/图片/文件/已有音频、兼容服务 ASR、组合发送、来源隔离和持久化队列。新增按来源/会话/发送者隔离的静默防抖：默认私聊 4 秒、群聊 1.5 秒、最长 12 秒封批；支持忙碌排队与缓冲恢复。默认禁用，安装不会接管旧桥接。
 
 - [安装、配置、工具与运行说明](docs/USAGE.md)
 - [旧桥接迁移与回滚](docs/MIGRATION.md)
 - [验证结果和已知限制](docs/VALIDATION.md)
 - [DSH 接口核实](docs/DSH-API.md) · [VoceChat API 核实](docs/VOCECHAT-API.md)
 - [ASR 配置和 Provider 扩展](docs/PROVIDERS.md)
+- [防抖合并、持久化与恢复语义](docs/DEBOUNCE.md)
 - [完整配置示例](config.example.yml)
 
 ```powershell

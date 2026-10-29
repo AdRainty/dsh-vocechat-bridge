@@ -16,6 +16,9 @@ const descriptions = {
     allowedLocalRoots: 'Agent 允许发送的本地文件根目录；默认禁止', allowedRemoteOrigins: '允许发送的远程媒体来源；仍禁止私网地址',
     asrBaseUrl: '兼容转写接口的 API base，例如本地服务 /v1', asrApiKeyRef: 'ASR API Key 凭据引用名，本地无鉴权服务可留空',
     allowProactive: '允许固定 Session 的非 VoceChat 轮主动发消息',
+    privateQuietMs: '私聊静默防抖毫秒数；新消息重置，默认 4000', groupQuietMs: '群聊静默防抖毫秒数；新消息重置，默认 1500',
+    maxWaitMs: '从批次首条消息开始的最长封批等待，默认 12000 毫秒；DSH 忙时封批后继续排队',
+    mergeWindowMs: '旧参数兼容：0 停用；非零时覆盖私聊和群聊静默时长，建议使用新参数',
     ttsProvider: '扩展保留，内置实现留空', audioUnderstandingProvider: '扩展保留，内置实现留空',
 };
 export const Config = Schema.object(Object.fromEntries(Object.entries(defaults).map(([key, value]) => {

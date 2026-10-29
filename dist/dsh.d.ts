@@ -1,4 +1,4 @@
-import type { Destination, PreparedMessage, SessionPort } from './types.ts';
+import type { Destination, PreparedMessage, SessionPort, SessionRunOptions } from './types.ts';
 /** Narrow structural views of the verified DSH 0.2.1-rc.3 capabilities. */
 export interface HostAgent {
     id: string;
@@ -31,6 +31,7 @@ type MessageFactory = (input: {
 }) => any;
 /** Uses the host's one driver; never steers or cancels a shared channel's turn. */
 export declare class DshSessionPort implements SessionPort {
+    readonly supportsSubmissionBarrier = true;
     private active?;
     private tail;
     private disposed;
@@ -48,7 +49,7 @@ export declare class DshSessionPort implements SessionPort {
         createUserMessage: MessageFactory;
     });
     private resumeSettings;
-    run(messages: PreparedMessage[], signal: AbortSignal): Promise<{
+    run(messages: PreparedMessage[], signal: AbortSignal, options?: SessionRunOptions): Promise<{
         text?: string;
         sent?: boolean;
         quiet?: boolean;

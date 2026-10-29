@@ -28,6 +28,8 @@
 
 桥接在入站队列中按顺序处理，并在每轮调用前等待宿主 `whenIdle()`。投递仅使用 `followup`，保持宿主唯一 driver 的串行语义，不使用 `steer`、不取消 Web 或 QQ 的工作。
 
+v0.2.0 先按来源/会话/发送者完成独立防抖并封批，再准备附件与 ASR。`DshSessionPort` 将一个批次构造成一条 `createUserMessage`，保留有序内容块及全部原始消息元数据，只调用一次 `followup`。等待 `whenIdle()` 期间维持可恢复状态，不消耗本轮 `turnTimeoutMs`；在 followup 前通过插件自己的提交屏障持久化 `dispatching`，随后才开始计算本轮超时。这是桥接内部协作接口，不是新增宿主 API。
+
 自动回复必须同时满足：固定会话 ID、自己生成的入站 message ID、该 message 所属 turn、正常 `completed` 结束。只读取最后 step 的文本，避免把工具前的过程叙述当最终回复发送。
 
 若其他渠道在同轮插入外部 user-role 消息，该轮标记为来源混合：自动回复关闭，相关发送工具拒绝隐式作为 VoceChat 回复。DSH 的 `runtime-context` 不属于外部消息，不会误触发这一保护。插件无法禁止其他插件或 Web 主动 steer 进同轮；这一条件下选择停止外发，避免串渠道泄露。
@@ -36,11 +38,11 @@
 
 成功工具发送会抑制本轮重复自动文本。组合发送部分成功后失败，也抑制自动文本；返回的错误应由 Agent 处理，不自动重传已经发送的片段。`voce_quiet` 设置本轮 quiet 并调用宿主 `concludeTurn()`，无需 `<noop>` 等文本标记。
 
-取消或超时只停止桥接等待和外发，不取消共享 Agent。已入队但未确认完成的消息不能当作未投递重新提交，运行层将其记录为 uncertain，供人工核查。
+取消只停止桥接等待和外发，不取消共享 Agent。提交前停止的批次保留为 ready，重启可继续；持久化 dispatching 后未确认完成的消息不能当作未投递重新提交，运行层将其记录为 uncertain，供人工核查。其他渠道排在自己之前的独立 turn 不会抑制本轮回复；只有同轮来源混合才关闭自动外发。
 
 ## 验证记录
 
-已运行 `node --experimental-strip-types --test tests/dsh.test.ts`，**14 个测试通过**，覆盖来源归属、共享会话顺序、其他渠道混入、最后 step、失败 turn、冷恢复、模型和 preset 恢复、observation lease 释放、原生附件、取消、工具发送、部分成功与 quiet。
+已运行 `node --experimental-strip-types --test tests/dsh.test.ts`，**19 个测试通过**，覆盖来源归属、共享会话顺序、其他渠道混入、最后 step、失败 turn、冷恢复、模型和 preset 恢复、observation lease 释放、原生附件、取消、工具发送、部分成功与 quiet，以及合并批次单条投递、提交屏障、忙碌等待超时隔离、不同发送者拒绝合并和前置 Web turn 隔离。
 
 另外使用本机 **真实 0.2.1-rc.3** `dsh-tools.defineTool` 编译全部七个工具的参数 schema，均通过；使用真实 `dsh-llm.createUserMessage` 和 `dsh-session.Session.create/append` 验证结构化插件 source 的 `user/message`，已被宿主接受且消息不可变。这些验证只在内存中执行，不连接生产会话、不调用模型、不发送真实消息。
 

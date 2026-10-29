@@ -27,6 +27,9 @@ export declare const defaults: {
     maxQueue: number;
     maxTextChars: number;
     textSegmentChars: number;
+    privateQuietMs: number;
+    groupQuietMs: number;
+    maxWaitMs: number;
     mergeWindowMs: number;
     maxBatch: number;
     dedupTtlMs: number;

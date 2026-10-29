@@ -16,7 +16,7 @@ const summary = { mode: 'receive-only', dshConnected: false, asrEnabled: false,
   mediaDownloadEnabled: input.allowMediaDownload === true,
   webhookTokenRequired: input.requireWebhookToken !== false,
   httpRequests: 0, lastHttpRequest: null,
-  startedAt: new Date().toISOString(), received: 0, prepared: 0, media: [], lastInbound: null };
+  startedAt: new Date().toISOString(), received: 0, prepared: 0, batchesPrepared: 0, media: [], lastInbound: null };
 let bridge;
 let writes = Promise.resolve();
 const safeCode = error => /^[A-Z][A-Z0-9_]{2,64}$/.test(error?.message || '') ? error.message : 'LIVE_TEST_ERROR';
@@ -29,6 +29,8 @@ async function saveStatus() {
 }
 const session = {
   async run(messages) {
+    summary.batchesPrepared++;
+    await record({stage:'batch-prepared',messageIds:messages.map(m=>m.id),count:messages.length});
     for (const message of messages) {
       const media = [];
       for (const attachment of message.attachments) {
@@ -51,12 +53,24 @@ const session = {
     return { quiet: true };
   },
 };
+// The audit harness dynamically accepts test senders. Restore only its pending
+// recipients from its own durable inbox so a process restart can drain them.
+const resumedUsers=new Set(),resumedGroups=new Set();
+try {
+  const prior=JSON.parse(await readFile(join(outputDir,'state.json'),'utf8'));
+  for(const job of prior.jobs || []) {
+    if(!['pending','processing'].includes(job.status)||job.message?.senderId===input.botUid)continue;
+    const d=job.message?.destination;
+    if(Number.isSafeInteger(d?.id)&&d.id>0)(d.kind==='group'?resumedGroups:resumedUsers).add(d.id);
+  }
+}catch(error){if(error.code!=='ENOENT')throw new Error('LIVE_STATE_LOAD_FAILED');}
 bridge = new Bridge({ enabled: true, baseUrl: input.baseUrl, botUid: input.botUid,
   botApiKeyRef: 'LIVE_BOT_KEY', webhookSecretRef: 'LIVE_WEBHOOK_SECRET',
   webhookHost: input.host || '0.0.0.0', webhookPort: input.port ?? 34567, webhookPath: '/vocehook',
   targetSessionId: 'live-receive-only-audit', autoReply: false, allowProactive: false,
   asrEnabled: false, statePath: join(outputDir, 'state.json'), tempDir: join(outputDir, 'tmp'),
-  userWhitelist: [], groupWhitelist: [], mergeWindowMs: 100,
+  userWhitelist: [...resumedUsers], groupWhitelist: [...resumedGroups], privateQuietMs: input.privateQuietMs ?? 4000,
+  groupQuietMs: input.groupQuietMs ?? 1500, maxWaitMs: input.maxWaitMs ?? 12000,
 }, { session, resolveCredential: async ref => ref === 'LIVE_BOT_KEY' ? input.botApiKey : input.webhookSecret,
   logger: Object.fromEntries(['debug', 'info', 'warn', 'error'].map(level => [level, text => {
     console.log(JSON.stringify({ at: new Date().toISOString(), level, code: text }));

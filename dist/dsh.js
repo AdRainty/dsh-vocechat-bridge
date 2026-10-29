@@ -13,6 +13,7 @@ function abortable(operation, signal) {
 const sameDestination = (a, b) => a.kind === b.kind && a.id === b.id;
 /** Uses the host's one driver; never steers or cancels a shared channel's turn. */
 export class DshSessionPort {
+    supportsSubmissionBarrier = true;
     active;
     tail = Promise.resolve();
     disposed = false;
@@ -70,8 +71,8 @@ export class DshSessionPort {
         return { agentOptions: { provider: selected.provider, model: selected.model,
                 ...(selected.reasoningEffort === undefined ? {} : { reasoningEffort: selected.reasoningEffort }) }, preset };
     }
-    run(messages, signal) {
-        const operation = this.tail.then(() => this.perform(messages, signal));
+    run(messages, signal, options) {
+        const operation = this.tail.then(() => this.perform(messages, signal, options));
         this.tail = operation.catch(() => { });
         return operation;
     }
@@ -173,24 +174,29 @@ export class DshSessionPort {
         }
         return content.length ? content : [{ type: 'text', text: '' }];
     }
-    async perform(messages, outerSignal) {
+    async perform(messages, outerSignal, options) {
         if (this.disposed)
             throw new Error('SESSION_DISPOSED');
         if (!messages.length)
             return { quiet: true };
         if (messages.some(m => !sameDestination(m.destination, messages[0].destination)))
             throw new Error('MIXED_DESTINATIONS');
-        const timeout = AbortSignal.timeout(this.config.turnTimeoutMs ?? 180_000);
-        const signal = AbortSignal.any([outerSignal, timeout, this.lifetime.signal]);
-        signal.throwIfAborted();
-        const agent = await abortable(this.ensureAgent(signal), signal);
+        if (messages.some(m => m.senderId !== messages[0].senderId))
+            throw new Error('MIXED_SENDERS');
+        const waitingSignal = AbortSignal.any([outerSignal, this.lifetime.signal]);
+        waitingSignal.throwIfAborted();
+        const agent = await abortable(this.ensureAgent(waitingSignal), waitingSignal);
         if (agent.session.id !== this.config.targetSessionId)
             throw new Error('SESSION_ID_MISMATCH');
-        const content = await this.content(messages, signal);
+        const content = await this.content(messages, waitingSignal);
         // whenIdle() drains every currently queued Web/QQ turn; followup itself is
         // void and only inserts into the next-turn inbox, so awaiting it is wrong.
-        await abortable(agent.whenIdle(), signal);
-        signal.throwIfAborted();
+        await abortable(agent.whenIdle(), waitingSignal);
+        waitingSignal.throwIfAborted();
+        await options?.beforeSubmit();
+        waitingSignal.throwIfAborted();
+        // A busy shared session does not consume this turn's timeout budget.
+        const signal = AbortSignal.any([waitingSignal, AbortSignal.timeout(this.config.turnTimeoutMs ?? 180_000)]);
         const input = this.dependencies.createUserMessage({ content, source: {
                 kind: 'plugin:dsh-vocechat-bridge', channel: 'vocechat',
                 destination: messages[0].destination,
@@ -224,6 +230,10 @@ export class DshSessionPort {
                         return;
                     const data = event.data ?? {};
                     if (event.type === 'turn/start') {
+                        // Another queued channel may run before our followup. Its source
+                        // flags belong to that turn; only mixing within our turn closes it.
+                        if (run.turn === undefined)
+                            run.contaminated = false;
                         run.currentTurn = data.turn;
                         return;
                     }

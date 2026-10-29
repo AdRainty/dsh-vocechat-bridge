@@ -75,6 +75,44 @@ test('DSH input source is structured and automatic reply belongs to the exact in
   assert.equal(f.listeners.size, 0);
 });
 
+test('a merged batch becomes exactly one user message with ordered content and original metadata',async()=>{
+  const f=fixture();f.setFollowup(m=>{f.start(m);f.answer('done');});
+  const one={...incoming('first'),id:'41'},two={...incoming('second'),id:'42'};
+  await f.session.run([one,two],signal());assert.equal(f.queued.length,1);
+  assert.deepEqual(f.queued[0].content.map((b:any)=>b.text),['first','second']);
+  assert.deepEqual(f.queued[0].source.messages.map((m:any)=>m.id),['41','42']);
+});
+
+test('submission barrier runs after shared-session idle and before the single followup',async()=>{
+  const f=fixture();let release!:()=>void,marked=0;
+  f.agent.whenIdle=()=>new Promise<void>(r=>{release=r;});
+  f.setFollowup(m=>{assert.equal(marked,1);f.start(m);f.answer('done');});
+  const operation=f.session.run([incoming()],signal(),{async beforeSubmit(){marked++;}});
+  await new Promise(r=>setImmediate(r));assert.equal(marked,0);assert.equal(f.queued.length,0);
+  release();await operation;assert.equal(marked,1);assert.equal(f.queued.length,1);
+});
+
+test('waiting for a busy DSH session does not consume the new turn timeout',async()=>{
+  const f=fixture();f.agent.whenIdle=()=>new Promise<void>(r=>setTimeout(r,40));
+  f.setFollowup(m=>{f.start(m);f.answer('done');});
+  const session=new DshSessionPort(f.ctx,{targetSessionId:'session-test',turnTimeoutMs:10},{createUserMessage:input=>({...input,id:randomUUID(),role:'user'})});
+  const result=await session.run([incoming()],signal());assert.equal(result.text,'done');assert.equal(f.queued.length,1);session.dispose();
+});
+
+test('different senders cannot be merged even when the destination is the same',async()=>{
+  const f=fixture();await assert.rejects(f.session.run([incoming(),{...incoming(),senderId:8}],signal()),/MIXED_SENDERS/);assert.equal(f.queued.length,0);
+});
+
+test('a separate queued Web turn before our followup does not suppress the later VoceChat answer',async()=>{
+  const f=fixture();f.setFollowup(m=>{
+    f.emit('turn/start',{turn:90});f.emit('user/message',{id:'web',source:{kind:'user'}});
+    f.emit('assistant/message',{turn:90,message:{content:[{type:'text',text:'private web answer'}]}});
+    f.emit('turn/end',{turn:90,reason:{kind:'completed'}});
+    f.start(m);f.answer('voce answer');
+  });
+  assert.deepEqual(await f.session.run([incoming()],signal()),{text:'voce answer',sent:false,quiet:false});
+});
+
 test('shared session drains Web/QQ work before followup and serializes concurrent VoceChat turns', async () => {
   const f = fixture();
   let releaseIdle!: () => void;
