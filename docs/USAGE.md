@@ -66,11 +66,11 @@ VoceChat 后台的 **16 字节 secret 是可选的消息加密设置**，留空�
 
 | 工具 | 参数 |
 | --- | --- |
-| `voce_send_text` | `destination`, `text`, 可选 `replyTo` |
+| `voce_send_text` | `destination`, `text`, 可选 `format: 'plain'|'markdown'`、`replyTo` |
 | `voce_send_image` | `destination`, `path` 或 `url` 二选一，可选 `name/mime/replyTo` |
 | `voce_send_audio` | 同上；发送已有音频，不自动生成 TTS |
 | `voce_send_file` | 同上，普通文件 |
-| `voce_send_message` | `destination`, 可选 `text`, `attachments`, `replyTo`；每项附件包含 `kind`、`path` 或 `url` |
+| `voce_send_message` | `destination`, 可选 `text`, `format`, `attachments`, `replyTo`；每项附件包含 `kind`、`path` 或 `url` |
 | `voce_quiet` | 无参数，在当前 VoceChat 轮安静结束 |
 | `voce_bridge_status` | 无参数，只返回生命周期、Session ID、队列数量和服务地址，不含凭据与消息正文 |
 
@@ -87,6 +87,8 @@ VoceChat 后台的 **16 字节 secret 是可选的消息加密设置**，留空�
   ]
 }
 ```
+
+文字默认 `format: 'plain'`；发送原生 Markdown 时显式设置 `format: 'markdown'`，插件使用 `text/markdown`，无需添加引用消息。自动文本回复仍默认普通文本。长文本按 `textSegmentChars` 分段，复杂 Markdown 的代码块或表格宜由调用方按逻辑段发送，避免语法跨越多个消息气泡。
 
 文字先发，附件按数组顺序逐一上传发送；一次最多 20 个附件。平台不能在单个气泡中混放这些内容，所以会拆成多条相邻消息。成功工具发送抑制本轮重复自动回复。部分成功时错误带 `sent:true` 和已经确认的 `receipts`，不会自动重发已有片段。
 

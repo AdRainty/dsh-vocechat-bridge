@@ -284,7 +284,7 @@ export class Bridge {
                     receipts.push(await this.client.sendText(destination, '附件', { replyTo, signal }));
                 for (let i = 0; i < text.length; i += this.config.textSegmentChars) {
                     signal.throwIfAborted();
-                    receipts.push(await this.client.sendText(destination, text.slice(i, i + this.config.textSegmentChars).join(''), { replyTo: i === 0 ? replyTo : undefined, signal }));
+                    receipts.push(await this.client.sendText(destination, text.slice(i, i + this.config.textSegmentChars).join(''), { replyTo: i === 0 ? replyTo : undefined, format: message.format, signal }));
                 }
                 for (const a of message.attachments || []) {
                     signal.throwIfAborted();

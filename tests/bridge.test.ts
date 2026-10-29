@@ -166,6 +166,12 @@ test('proactive switch, destination gate and Unicode-aware text segmentation',as
   bridge.config.allowProactive=true;await bridge.send({kind:'user',id:10},{text:'😀😀中'},{proactive:true});
   assert.deepEqual(sent.map(s=>s.text),['😀😀','中']);
 });
+
+test('bridge forwards explicit Markdown format to its native text sender',async t=>{
+  const {bridge,sent}=await setup(t);
+  await bridge.send({kind:'user',id:10},{text:'**加粗**',format:'markdown'});
+  assert.equal(sent[0].type,'text/markdown');assert.equal(sent[0].text,'**加粗**');
+});
 test('restart restores pending and dedup, quarantines uncertain turns and preserves session config',async t=>{
   const {bridge,dir}=await setup(t);await bridge.stop();
   const path=join(dir,'state.json');

@@ -11,6 +11,7 @@ export interface VoceChatOptions {
 }
 export interface SendOptions {
     replyTo?: number;
+    format?: 'plain' | 'markdown';
     signal?: AbortSignal;
     validate?: (bytes: Buffer, name: string, mime: string) => Promise<void>;
 }

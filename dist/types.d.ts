@@ -34,6 +34,7 @@ export type OutgoingAttachment = {
 };
 export type OutboundMessage = {
     text?: string;
+    format?: 'plain' | 'markdown';
     attachments?: OutgoingAttachment[];
     replyTo?: number;
 };

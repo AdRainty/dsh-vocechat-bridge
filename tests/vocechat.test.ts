@@ -92,6 +92,15 @@ test('prepare + multipart upload + image/file/audio send preserve Unicode metada
   assert.equal(f.events[5].props.content_type, 'application/pdf');
 });
 
+test('explicit Markdown sends native text/markdown without adding a reply quote', async t => {
+  const f = await fixture(t);
+  const text = '## Markdown\n\n**加粗** 与 `代码`\n\n- 第一项';
+  assert.deepEqual(await f.client.sendText({kind:'user',id:3},text,{format:'markdown'}),{messageId:101});
+  assert.equal(f.events[0].type,'text/markdown');assert.equal(f.events[0].body.toString(),text);
+  await assert.rejects(f.client.sendText({kind:'user',id:3},'x',{format:'html'} as any),/INVALID_TEXT_FORMAT/);
+  assert.equal(f.events.length,1);
+});
+
 test('older servers fall back from vocechat/audio 415 to a normal audio attachment', async t => {
   const f = await fixture(t);
   f.setRejectAudio();

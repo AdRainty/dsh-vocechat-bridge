@@ -20,6 +20,7 @@ export interface VoceChatOptions {
 }
 export interface SendOptions {
   replyTo?: number;
+  format?: 'plain' | 'markdown';
   signal?: AbortSignal;
   validate?: (bytes: Buffer, name: string, mime: string) => Promise<void>;
 }
@@ -83,10 +84,11 @@ export class VoceChatClient {
 
   async sendText(destination: Destination, text: string, options: SendOptions = {}): Promise<SendResult> {
     if (!text.trim()) throw new Error('EMPTY_TEXT');
+    if (options.format !== undefined && !['plain', 'markdown'].includes(options.format)) throw new Error('INVALID_TEXT_FORMAT');
     // Public Bot API has no native reply operation; a visible quote retains logical linkage.
     const body = options.replyTo === undefined ? text : `> 回复消息 #${positiveId(options.replyTo)}\n\n${text}`;
     const result = await this.request(this.endpoint(destination), {
-      method: 'POST', headers: { 'content-type': options.replyTo === undefined ? 'text/plain' : 'text/markdown' }, body, signal: options.signal,
+      method: 'POST', headers: { 'content-type': options.replyTo !== undefined || options.format === 'markdown' ? 'text/markdown' : 'text/plain' }, body, signal: options.signal,
     });
     return { messageId: this.parseMessageId(result.bytes) };
   }
