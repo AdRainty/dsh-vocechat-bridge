@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
       INVALID_SETTINGS:'配置不完整或格式不正确，请检查服务地址、Bot UID、Session ID、白名单和语音参数。',
       CREDENTIALS_READ_ONLY:'DSH 凭据库不可写，可使用已有凭据或同名环境变量。',CREDENTIAL_WRITE_FAILED:'Key 保存失败，请检查 DSH 凭据库。',
       CREDENTIAL_VALUES_CONFLICT:'同一凭据引用的两个 Key 不一致。',BRIDGE_START_FAILED:'启动失败，请检查 Bot Key、Webhook 令牌和端口占用。',
-      WEBHOOK_PORT_IN_USE:'监听端口已被占用，请修改端口，或先停止占用该端口的旧桥接。',
+      WEBHOOK_PORT_IN_USE:'监听端口已被占用，请修改端口，或先停止占用该端口的服务。',
       BRIDGE_CREDENTIAL_MISSING:'Bot API Key 未配置，请填写并保存后再启动。',
       WEBHOOK_CREDENTIAL_MISSING:'Webhook 访问令牌未配置；可关闭“校验 Webhook 访问令牌”使用明文模式，或填写令牌后启动。',
       SETTINGS_LOAD_FAILED:'插件本地设置文件无法读取，请检查 settings.json。',SETTINGS_OPERATION_FAILED:'操作未完成，请检查配置和目录权限。',

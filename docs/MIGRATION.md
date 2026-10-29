@@ -1,75 +1,53 @@
-# 从旧 Webhook 桥接迁移与回滚
+# 安装升级、配置迁移与回滚
 
-本次开发没有修改 `vocechat-bridge`、QQ 桥接、SOUL、记忆或自主定时任务，也没有执行生产切换。新插件默认禁用，使用独立 8898 端口和独立状态目录。
+本插件默认禁用，默认监听 `127.0.0.1:8898`，使用自己的设置、缓冲和暂存目录。人格、记忆和自主定时任务由 DSH 及相关插件管理，不属于本插件的升级范围。
 
-升级到 v0.2.0 时，先停插件并备份本地状态；新状态格式为 v2，支持恢复静默计时和已封批队列。默认私聊 4 秒、群聊 1.5 秒、最长 12 秒封批。删除旧 `mergeWindowMs` 或设为 0 后再使用新参数；状态升级与降级注意事项见 [DEBOUNCE.md](DEBOUNCE.md)。
+## 升级步骤
 
-v0.3.x 保持 v2 状态格式，新增 OpenAI/MiMo 识别合成。v0.3.1 修复设置入口，改为与 `dsh-bili-scroll` 相同的 **设置 → VoceChat**，并提供启动/停止/重载按钮。链接安装升级后先在插件页关闭再打开该插件一次，刷新界面；之后可直接在设置页控制后端，不必重启 DSH。
+1. 在设置页停止桥接，等待正在进行的操作收尾。备份插件的 `settings.json`、`state.json`、DSH profile 配置和凭据引用；实际凭据备份放在受保护位置，不要复制进源码仓库。
+2. 安装目标版本的 Release tgz，或更新源码后执行 `npm ci --legacy-peer-deps` 与 `npm run build`。源码仓库不包含 `dist/`，发布 tgz 包含已构建文件。
+3. 重载插件包，刷新设置页。开启 HMR 的宿主也可能自动加载代码更新；“保存并重载后端”只重建当前已加载代码的后端实例。
+4. 检查 Bot UID、已有 Session ID、白名单、凭据引用和 Webhook 监听配置。保留原 Session ID 可继续使用同一会话的历史、人格与记忆，不需要新建替代会话。
+5. 启动桥接，检查 Webhook GET 返回 200。VoceChat 的 AES Secret 留空；插件的访问令牌校验按需启用。
+6. 在授权的测试私聊或群聊发送文字和媒体，核对 DSH 入站、原目标回复、语音及白名单。使用独立测试实例时，为其指定不同的状态与暂存目录。
 
-原有 `asrEnabled/asrBaseUrl/asrModel/asrApiKeyRef` 配置继续使用标准 OpenAI 转写协议；旧的空 `ttsProvider` 按 `openai` 兼容，合成仍需显式启用。页面保存的字段写入插件 settings.json 并优先于 profile，同名字段以后在页面调整。旧 MiMo 的 `MIMO_*` 环境配置不会自动导入：将 `asrProvider/ttsProvider` 设为 `mimo`，使用 `MIMO_API_KEY` 引用；模型、音色、描述按 [PROVIDERS.md](PROVIDERS.md) 配置。
+更换 Webhook 接收端时，保留配置备份，并确保同一 Bot 的相同事件只有一个有效处理入口；不同实例的本地去重不能阻止跨实例重复回复。
 
-## 切换步骤
+## 版本兼容
 
-1. 备份旧桥接的启动方式、环境配置、Webhook URL 和 DSH profile 的 `cordis.patch.yml`；凭据备份放在受保护位置。记录旧监听端口、Bot UID 和目标 Session ID。不要把含密钥的配置复制进本项目。
-2. 安装本插件，先保持 `enabled:false`。按 USAGE 填写相同的**已有 Session ID**，不要新建 Session；配置 Bot Key 的凭据引用、机器人自身 UID、UID/GID 白名单。
-3. 确认可用的 ASR 服务；本地兼容服务不需要云端 Key。运行 `npm run check`。图片需要支持图片输入的目标模型；压缩音频检查 FFprobe，转换检查 FFmpeg。
-4. 用独立测试 Bot/测试群验证文字、图片、文件、语音和组合发送。独立测试可以使用同一插件实现与单独 statePath；正式会话联调会实际写入会话历史并可能产生模型费用。
-5. 正式切换时，先停止旧桥接进程及会自动拉起它的 watchdog/启动任务，在本插件设置页点击“启动桥接后端”，并把 VoceChat Webhook 改到新端点。不要同时让旧桥接与新插件接收同一个 Bot 的相同事件，否则各自去重无法阻止跨进程重复回复。
-6. 新端点 GET 无需鉴权即可返回 200；POST 默认接收明文 JSON，不填 Secret 也可工作。VoceChat 后台的 AES Secret 留空；只有开启插件可选的访问令牌校验时，才需配置 URL query 或代理 Authorization。发送一次私聊和群聊，核对原目标回复、图片/音频与白名单；在 DSH Web 和 QQ 各发一条测试消息，确认没有自动转到 VoceChat。
-7. 确认完成前保留旧程序与备份。不要导入旧 `[img:...]`、`<noop>` 或“所有会话回复都转发”的消息协议；新插件通过工具与本轮来源完成这些行为。
+- **v0.2.0** 引入状态格式 v2、持久化防抖和批次边界。升级前先停止实例并备份状态。使用新的静默窗口参数时，将兼容项 `mergeWindowMs` 删除或设为 0。
+- **v0.3.x** 沿用状态格式 v2，加入语音设置页、OpenAI/MiMo ASR 和 TTS，以及后端启停、重载和启动恢复。
+- **v0.4.0** 增加同会话历史背景、最近 N 条历史工具和入站诊断。
+- **v0.4.1** 修复内部记忆/时间上下文被误判为混合来源；历史查询独立校验身份和白名单，混合回合显式发送按主动发送策略处理。
+- **v0.4.2** 整理公开文档和许可，源码不再跟踪 `dist/`；运行实现与状态格式保持兼容。
 
-## 旧脚本中需要保留的迁移经验
+状态和防抖的升级、恢复规则见 [DEBOUNCE.md](DEBOUNCE.md)。已完成与结果不确定的批次不会在升级后自动补发。降级到不认识 v2 的版本前，应停止实例并恢复该版本对应的备份，不要把当前状态强行交给旧格式读取器。
 
-以下依据旧 `vocechat-bridge/bridge.mjs` 的 `onSessionEvent`、`pushIncoming`、`groupIdOf`、`mimoAsr` 以及《移植说明-群聊与语音.md》核对。它们是部署时踩过的兼容问题；新插件的对应行为和差异必须一起检查。
+## 配置注意事项
 
-### 主动开口不能误发给最近来信人
+### 设置与凭据
 
-旧脚本将 `lastUid` 初始化为 `VOCE_DEFAULT_UID`，收到有效且非 Bot 的用户消息时更新为最近来信人的 UID。非桥接触发的会话轮次也会转发，目标取当时的 `lastUid`；配置 `VOCE_DEFAULT_GID` 时，主动消息按该群路由。这样会让 Web、其他渠道或自主任务的输出继承一个与当前意图无关的接收者。`VOCE_DEFAULT_UID` 只是初始值，并不能固定住之后的私聊目标；重启后尚未收到消息且没有默认 UID 时，旧出口还会因缺少 UID 跳过发送。
+插件页面保存到 `settings.json` 的字段优先于 profile 同名值。凭据字段填写的是 DSH credentials 或环境变量的**引用名**，实际 Key 不保存在插件设置文件中。
 
-新插件没有“最近来信人”兜底：普通自动回复绑定触发消息的目标；主动发送必须调用 `voce_send_*`，显式提供 `destination`，同时满足目标白名单和 `allowProactive:true`。旧环境里的默认 UID/GID 不能自动转换成新插件的主动收件人配置。要恢复主动开口，需要让原有调用方明确选择目标，本插件不实现自主调度。
+VoceChat 后台的 AES Secret 与插件可选的 Webhook 访问令牌属于不同功能。当前接收端处理明文 JSON，AES Secret 留空即可；Bot API Key 仍是调用 Bot API 所必需的凭据。
 
-迁移验证：让两个不同 UID 先后来信，再从 Web 或其他渠道产生会话输出，确认不会自动发给最后来信人；然后使用明确目标测试一次主动发送，核对实际接收者。不要用生产用户互相可见的内容测试。
+### 回复目标
 
-### 群 ID 的四个兼容位置要逐项核对
+自动回复绑定触发批次的 `destination`。主动工具发送必须明确 UID/GID，通过目标白名单并满足 `allowProactive` 配置。不要依赖“最近联系的人”来推定目标。
 
-旧 `groupIdOf(payload, detail)` 依次尝试下面四个对象。在每个对象内，优先读 `gid`，其次 `group_id`，最后仅在 `type === 'group'` 时读 `id`，取第一个有效的正数：
+历史背景只是上下文，不应作为新消息重新提交。Bot 互通相关的上游行为和 SSE 方向见 [BOT-MESSAGES.md](BOT-MESSAGES.md)。
 
-| 顺序 | 旧脚本尝试的位置 |
-| --- | --- |
-| 1 | `detail.target` |
-| 2 | `payload.target` |
-| 3 | `detail.properties` |
-| 4 | `payload.properties` |
+### 音频与语音
 
-当前新插件的 [入站解析](../src/inbound.ts) 按官方 Webhook 形状读取顶层 `payload.target.gid` 或 `payload.target.uid`，**没有移植上述四位置及别名兜底**。不能因为旧脚本能收群消息，就认为同一份旧载荷可以直接迁移。如果实际群 ID 只出现在其他位置，载荷可能被拒；若同时带有可被解释为私聊的 `target.uid`，还存在被误判为私聊的风险，应在启用前排除。
+文件扩展名和 MIME 不能代替真实转码。压缩音频使用 FFprobe 探测；识别服务要求特定容器、采样率或声道时由 FFmpeg 归一化。MiMo 输入按当前适配器转为 16 kHz、单声道 PCM WAV，转写和原始文件独立保留。
 
-迁移验证：用测试群取得脱敏的 Webhook 样本，核对群消息最终解析为 `{kind:'group', id:实际GID}`，回复端点为 `send_to_group`。若部署产生非标准载荷，先在入口适配成官方结构，或基于实际样本增加解析适配及回归测试，再进行切换；遇到多个群 ID 字段冲突时应拒绝，而不是猜测一个目标。不要在普通日志中保留原始载荷、聊天正文或凭据。
-
-旧脚本还使用全局 `REPLY_SCOPE` 保存群目标，依赖串行处理。移植时不能让并发消息共享可变目标；新插件将 `destination` 保存在每条结构化消息和本轮状态中。
-
-### ASR 的容器、采样率、声道与请求协议要分别确认
-
-旧脚本记录的实际问题是：手机语音可能为 M4A，而当时接入的 ASR 只接受 WAV/MP3。`mimoAsr` 对非 `.wav`/`.mp3` 文件先执行 FFmpeg，转换为 **16 kHz、单声道 WAV**，再按旧服务要求编码请求；已有 WAV/MP3 则直接上传。只改文件扩展名或 MIME 不会完成音频转换。
-
-新插件的标准 OpenAI Provider 默认接受 WAV、MP3、OGG、M4A、FLAC、WebM 并直接上传，不能据此推断实际 ASR 服务支持全部格式。对仅接受 WAV 的服务可设置：
-
-```yaml
-asrAcceptedFormats: ['wav']
-ffmpegPath: ffmpeg
-ffprobePath: ffprobe
-```
-
-标准 OpenAI Provider 下，此配置会把 **M4A 等非 WAV 容器**转换为 16 kHz、单声道、PCM WAV；**已有 WAV 不会重新采样或混为单声道**。v0.3.0 的 **MiMo Provider 则对全部输入强制归一化为 16 kHz 单声道 PCM WAV**，保留原文件供 DSH 附件使用。用实际样本检查 FFprobe 结果，不能仅检查 `.wav` 后缀。依赖、大小、时长及格式错误应明确处理，失败时不生成转写。
-
-另外，旧 `mimoAsr` 使用 `/chat/completions` 的 JSON `input_audio` / Base64 协议；v0.3.0 已由 MiMo Provider 封装，标准 OpenAI Provider 继续使用 `/audio/transcriptions` 的 multipart 协议。迁移时必须选择正确厂家，不能只替换模型名。配置和扩展方法见 [PROVIDERS.md](PROVIDERS.md)。
-
-迁移验证：至少使用一条手机 M4A 和一条已有 WAV，分别确认实际上传格式、采样率、声道和识别结果，并测试格式拒绝或转写失败的处理。先在测试服务完成这些检查，再替换正式语音链路。
+ASR/TTS 的端点、模型、音色和风格配置见 [PROVIDERS.md](PROVIDERS.md)。识别失败会记录不可用原因，不伪造内容，也不丢弃原始文件。
 
 ## 回滚
 
-1. 在“设置 → VoceChat”点击“停止”，再在插件管理页关闭该插件；确认状态工具显示停止或插件已经卸载。页面保存过 enabled 时，以插件 settings.json 为准，单改 profile 的同名值不会覆盖它。
-2. 把 VoceChat Webhook URL 恢复为备份中的旧地址，再恢复旧桥接进程与原 watchdog。核对旧端口监听与消息发送。
-3. 保留新插件 `state.json` 供核查 `pending/uncertain` 消息。不要让两套程序同时自动重放；逐条核对消息 ID，再决定是否人工补发。
-4. 如需卸载，通过 DSH 插件管理移除 `vocechat-bridge`。状态目录和宿主持久附件属于聊天数据，确认不再需要后再自行清理。
+1. 停止当前桥接并保留日志与状态备份，确认监听已释放。
+2. 安装先前版本；源码方式需要使用对应版本重新构建，再重载插件包。
+3. 按需要恢复与该版本匹配的设置和状态，核对 Bot UID、Session、白名单、凭据引用及 Webhook 地址。
+4. 使用授权测试消息检查入站和回复目标，再恢复日常使用。
 
-桥接不改原 Session ID、人格或长期记忆文件；正式测试产生的会话聊天历史仍会保留，回滚通信插件不会回滚聊天记录。
+回滚插件不会撤销已经写入 DSH 的聊天记录、已经保存的宿主附件或已经发出的 VoceChat 消息。

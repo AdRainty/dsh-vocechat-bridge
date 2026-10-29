@@ -1,303 +1,140 @@
 # dsh-vocechat-bridge
 
-已实现 **v0.4.1**：面向 **DSH 0.2.1-rc.3 / Node.js 22.19+** 的原生 TypeScript 插件。支持固定会话双向文字/图片/文件/音频、组合发送、来源隔离和持久化队列。按 `dsh-bili-scroll` 的方式在 **设置 → VoceChat** 提供连接与语音配置，以及启动/停止/重载后端按钮。支持标准 OpenAI 与小米 MiMo 的识别、合成；语音输入同时保留原文件和转写文字。私聊默认静默 4 秒、群聊 1.5 秒、最长 12 秒封批，支持忙碌排队与缓冲恢复。每批默认附带 6 条同会话历史，另提供私聊/群聊最近 N 条查询工具；历史仅作背景，不触发旧消息补回复。桥接及 ASR/TTS 默认禁用，安装不会接管旧桥接。
+连接 [DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness) 与 [VoceChat](https://voce.chat/) 的第三方插件。在 VoceChat 私聊或群聊中使用已有 DSH 会话，收发文字、图片、文件与语音，并保留该会话原有的人格、记忆和工具权限。
 
-v0.4.1 修复记忆召回、时间快照和模型切换通知被误判成其他渠道输入的问题。正常回合恢复自动回复；真正混合来源的回合继续关闭自动回复，但显式工具发送按主动发送开关和白名单校验，历史查询独立校验固定 Session 与白名单。
+**当前版本：0.4.2 · 许可证：Apache-2.0**
 
-- [安装、配置、工具与运行说明](docs/USAGE.md)
-- [旧桥接迁移与回滚](docs/MIGRATION.md)
-- [验证结果和已知限制](docs/VALIDATION.md)
-- [DSH 接口核实](docs/DSH-API.md) · [VoceChat API 核实](docs/VOCECHAT-API.md)
-- [语音设置页、OpenAI / MiMo 与 Provider 扩展](docs/PROVIDERS.md)
-- [防抖合并、持久化与恢复语义](docs/DEBOUNCE.md)
-- [完整配置示例](config.example.yml)
+- [GitHub](https://github.com/AdRainty/dsh-vocechat-bridge)
+- [GitLab](https://gitlab.adrainty.online/dsh-plugins/dsh-vocechat-bridge)
+- 上游：[DSH](https://github.com/deepseek-ai/deepseek-harness) · [VoceChat Server](https://github.com/Privoce/vocechat-server-rust) · [VoceChat 文档](https://doc.voce.chat/)
 
-```powershell
+## 功能
+
+- **双向消息**：私聊、群聊、普通文本、Markdown、图片、文件、已有音频及组合发送。
+- **语音**：支持标准 OpenAI 协议和小米 MiMo 的识别与合成。语音输入同时附带真实转写与原始文件；识别失败会标明原因。
+- **固定会话**：绑定已有 DSH Session，按当前消息的来源回复；主动发送要求明确目标并受配置限制。
+- **消息缓冲**：按频道、会话、目标和发送者分别持久化防抖批次，支持忙碌排队、崩溃恢复与重复投递去重。
+- **历史上下文**：每批默认附带 6 条更早的同会话消息，另有私聊、群聊最近 N 条查询工具。
+- **设置页**：在 DSH 的“设置 → VoceChat”配置连接、白名单和语音，控制启动、停止和重载。启用状态会保存，DSH 下次启动时自动恢复。
+
+插件负责通信和媒体处理；人格、长期记忆与自主调度由 DSH 及相应插件管理。
+
+## 运行要求
+
+| 组件 | 要求 |
+| --- | --- |
+| DSH | 已在 `0.2.1-rc.3` 核实插件接口；升级宿主后应重新验证兼容性 |
+| Node.js | `22.19.0` 或更新版本 |
+| VoceChat | 可使用 Bot API 和 Webhook；主要联调版本为 `0.5.38` |
+| FFprobe / FFmpeg | 压缩音频探测、格式转换或 MiMo 音频归一化时需要 |
+| ASR / TTS 服务 | 可选；配置服务端点、模型和凭据引用后分别启用 |
+
+桥接、ASR 和 TTS 默认关闭。默认绑定 `127.0.0.1:8898`；私聊和群聊白名单默认均为空，对应渠道不会被接收。
+
+## 安装
+
+从任一代码仓库克隆，然后在插件目录中构建并安装：
+
+```sh
+git clone https://github.com/AdRainty/dsh-vocechat-bridge.git
+cd dsh-vocechat-bridge
 npm ci --legacy-peer-deps
-npm run check
-npm pack
-dsh plugin --profile web add "K:\Code\Tools\dsh-plugins\dsh-vocechat-bridge"
+npm run build
+dsh plugin --profile web add "$PWD"
 ```
 
-安装后打开 **设置 → VoceChat**，填写服务地址、Bot UID、Key、Session 与白名单，点击“启动桥接后端”。语音配置保存后下一次请求生效，连接参数修改后点击“保存并重载后端”，无需重启 DSH。已完成本地功能验证、真实 DSH 发行库兼容性，以及真实 VoceChat 私聊的文本/Markdown/图片/已有语音双向收发验证；用户确认 Markdown 正常渲染、图片可预览、语音可播放。真实 DSH Agent 回复和云端 ASR/TTS 仍待配置服务后联调。音频理解（如 Qwen Omni）继续保留扩展接口。以下保留原始项目目标和验收要求。
+源码仓库不保留 `dist/`；上述构建步骤会生成插件入口 `dist/index.js`。运行时所需的三个 `@deepseek-ai/*` peer dependency 由 DSH 宿主提供。
 
-## 一、项目目标
+也可以直接下载 [GitHub Releases](https://github.com/AdRainty/dsh-vocechat-bridge/releases) 中的插件 tgz。发布包内含 `dist/`、客户端入口、配置和许可文件，无需自行编译；可通过 DSH 插件安装器安装。维护者运行 `npm pack` 可生成相同结构的 `dsh-vocechat-bridge-0.4.2.tgz`。
 
-开发独立的 DeepSeek Harness 原生插件 `dsh-vocechat-bridge`，将目前基于 Webhook 的 VoceChat 桥接升级为完整的双向多模态通信插件。
+链接安装更新代码后，需要重载**插件包**才能替换已加载模块；宿主启用 HMR 时也可能自动重载。“保存并重载后端”用于应用连接配置，不负责重新导入代码。详见[安装与运行](docs/USAGE.md)。
 
-兼容当前 DSH 0.2.1-rc.3，优先使用 TypeScript + Node.js。
+## 首次配置
 
-核心能力：
+1. 在 VoceChat 创建 Bot，取得 Bot API Key 和 Bot 自身 UID。
+2. 在 DSH 打开“设置 → VoceChat”，填写 VoceChat 基址、Bot UID、已有 Session ID，以及允许通信的私聊 UID / 群聊 GID。
+3. 保存 Bot Key 到 DSH 凭据库。配置中的 `botApiKeyRef` 填引用名，例如 `VOCECHAT_BOT_API_KEY`，不要把真实 Key 写进 YAML、源码或仓库。
+4. 配置监听地址、端口和反向代理，启动桥接。把 VoceChat Webhook 指向可从 VoceChat 服务端访问的地址，例如 `https://bridge.example.com/vocehook`。
+5. 验证 Webhook：GET 应返回 200。随后发送一条授权私聊或群聊消息，检查它是否进入所绑定的 DSH 会话，以及回复是否回到原目标。
 
-- 接收 VoceChat 文字、图片、语音和文件。
-- 收到语音后自动下载、识别并转写为文本。
-- 支持 Agent 主动发送文字、图片、语音和文件。
-- 支持一条回复包含文字和多个媒体附件。
-- 支持固定 DSH Session，实现跨渠道记忆连续性。
-- 预留音频理解能力，未来可以接入 Qwen Omni。
-- 不通过复杂的文本标记或大段提示词实现消息协议。
+**VoceChat 后台的 AES Secret 留空。** 当前插件接收明文 JSON；该加密 Secret 是可选项。插件另有可选的 Webhook 访问令牌校验，和 VoceChat 的 AES 加密设置是两个不同功能。Bot API Key 则是访问 Bot API 所需的凭据。
 
-**本项目仅负责 VoceChat 通信与多模态处理，不实现人格、记忆或自主定时调度。**
+配置文件方式见 [config.example.yml](config.example.yml)。示例域名和 ID 均为占位值，实际连接信息需由部署者填写。
 
-## 二、开始前的调查
+## Agent 工具
 
-首先检查：
+| 工具 | 用途 |
+| --- | --- |
+| `voce_send_text` | 发送普通文本或 Markdown，可引用指定消息 |
+| `voce_send_image` / `voce_send_audio` / `voce_send_file` | 上传并发送本地或允许来源的媒体 |
+| `voce_send_message` | 按顺序组合文字、媒体和可选合成语音 |
+| `voce_speak` | 使用已配置的 TTS 合成并发送语音 |
+| `voce_get_private_history` / `voce_get_group_history` | 查询指定私聊或群聊最近 N 条消息 |
+| `voce_quiet` | 安静结束当前 VoceChat 回合 |
+| `voce_bridge_status` | 查看生命周期、缓冲与入站诊断，不返回凭据或消息正文 |
 
-1. DSH 当前版本的插件开发接口、Agent 和 Session API。
-2. 当前 VoceChat Webhook 桥接实现。
-3. `dsh-qq-bridge` 的消息接收、Session 绑定、消息发送和工具注册机制。
-4. VoceChat 官方 Bot API、Webhook、附件下载、文件上传、语音与图片发送方式。
-5. 当前 DSH 是否提供原生音频、图片或多模态消息输入接口。
+所有发送工具都要求显式 `destination: { kind: 'user' | 'group', id: 数字 }`，并检查目标白名单。主动发送需开启 `allowProactive`。本地文件和远程媒体还分别受目录、来源及网络访问规则限制。
 
-参考资料：
+普通自动回复在 DSH 回合完成后发送最终文本；成功使用发送工具后会抑制重复自动回复。已核实的记忆召回、时间快照和模型切换通知属于内部上下文，不会被当成其他渠道输入。
 
-- https://github.com/deepseek-ai/deepseek-harness
-- https://github.com/sj244/dsh-qq-bridge
-- https://doc.voce.chat/
+## 消息缓冲与默认行为
 
-必须基于实际源码和 API 文档开发，不得臆造接口或消息字段。
+| 参数 | 默认值 |
+| --- | --- |
+| 私聊静默窗口 | 4 秒 |
+| 群聊静默窗口 | 1.5 秒 |
+| 单批最长等待 | 12 秒 |
+| 每批最多原始消息数 | 10 条 |
+| 自动附带历史 | 6 条；可设为 0 关闭 |
+| 历史工具条数 | 默认 20，范围 1–100 |
+| 长文本发送分段 | 每条最多 2000 个 Unicode code point |
 
-## 三、消息接收
+新消息重置静默计时，最长等待到期则封批；不同发送者不会合并。批次保留原始顺序、消息 ID、附件和已有转写。提交结果不确定的批次不会在重启后自动重放，避免重复回复。
 
-支持：
+算法和恢复语义见[防抖合并](docs/DEBOUNCE.md)。
 
-- VoceChat 私聊、群聊。
-- UID / GID 白名单。
-- 指定固定 DSH Session。
-- 文本、图片、语音、普通附件。
-- 消息 ID 去重和顺序处理。
-- Bot 自身消息过滤，避免循环。
-- 多消息并发时的安全排队及消息合并。
+## 为什么另一只 Bot 的消息收不到
 
-内部使用统一的结构化消息对象，保留来源、发送者、消息时间、消息 ID、附件元数据。
+在已验证的**官方 VoceChat 0.5.38 Linux amd64** 发行包和镜像中，Webhook 转发函数会跳过 `is_bot = true` 的发送者。因此 Bot 消息可以出现在聊天历史和 SSE 中，却没有被 POST 到接收插件。给 Bot 改密码，或换成普通用户 Token 调用发送接口，都不会改变其 Bot 身份。
 
-不要再把来源说明、`<noop>` 规则和 `[img:路径]` 之类的字符串追加到每条用户消息后面。
+插件会忽略**自身**消息；允许范围内的其他 Bot 消息如果确实被投递到 Webhook，会正常进入队列。群聊可通过 `groupSenderWhitelist` 选择允许触发回复的用户或 Bot。
 
-## 四、语音接收与自动转写
+SSE 是可行的另一条入站路径：Bot 的用户登录 Token 可以订阅用户事件流并收到其他 Bot 消息，Bot API Key 则不能替代该 Token。**当前插件尚未实现 SSE 接收。**
 
-这是本次新增的重点功能。
+详见 [Bot 消息的现象、结论与 SSE 方案](docs/BOT-MESSAGES.md)。
 
-### 4.1 语音处理流程
+## 安全与配置
 
-VoceChat 收到语音消息后：
+- 默认基址、Bot UID、Session 为空或未配置值；未配置完整时无法启动。
+- Key 保存在 DSH credentials 或进程环境中；源码中的 `*_API_KEY` 是引用名。
+- 设置页不回传已有 Key，日志及入站诊断不输出凭据或消息正文。
+- 本地媒体只允许配置的目录，远程媒体默认拒绝；下载禁止重定向并检查地址和大小。
+- 历史内容作为外部背景传入，不作为新的用户请求执行。
 
-1. 识别语音消息类型。
-2. 通过 VoceChat API 下载原始语音。
-3. 检测实际音频格式和时长。
-4. 必要时转换为 ASR 服务支持的格式。
-5. 调用可配置的语音识别服务。
-6. 获得文字转写结果。
-7. 将转写内容和原始消息来源送入绑定的 DSH Session。
-8. 清理临时文件，保留必要的处理记录。
+不要提交真实 `.env`、凭据库、部署配置、会话日志、媒体或运行状态。变更部署前保留配置备份，并确保同一 Bot 的相同事件只有一个有效处理入口。
 
-支持常见的 WAV、MP3、OGG/Opus、M4A 等格式；实际支持范围应以 VoceChat 接口和音频解码能力为准。
+## 文档与开发
 
-音频转换可以使用 FFmpeg，但应检测依赖是否存在，并提供明确错误说明。
+固定会话与渠道桥接方式参考了 [sj244/dsh-qq-bridge](https://github.com/sj244/dsh-qq-bridge)。
 
-### 4.2 ASR 引擎
+- [安装、配置和工具说明](docs/USAGE.md)
+- [升级、配置迁移与回滚](docs/MIGRATION.md)
+- [语音 Provider、OpenAI 与 MiMo](docs/PROVIDERS.md)
+- [DSH 接口](docs/DSH-API.md) · [VoceChat API](docs/VOCECHAT-API.md)
+- [验证记录与限制](docs/VALIDATION.md)
+- [开发约定与原始验收要求](AGENTS.md)
 
-设计可扩展的语音识别 Provider 接口。
+```sh
+npm run check
+npm pack
+```
 
-第一阶段至少支持一种可以实际运行的 ASR 服务，并预留：
+当前功能基线通过 105 项自动化检查，并有真实发行库兼容性、媒体探测、VoceChat 消息收发及隔离服务端验证记录。具体版本和真实服务联调范围以验证文档为准。
 
-- OpenAI 兼容的语音转写 API。
-- 阿里云百炼语音识别接口。
-- 本地 Whisper / faster-whisper 等服务。
+维护者推送与 `package.json` 版本一致的 `v*` 标签时，GitHub Actions 会构建并发布 tgz 和 `SHA256SUMS`；构建产物不提交到 Git。
 
-支持配置 API 地址、模型、鉴权、超时、语言和音频大小限制。
+## 许可证与上游
 
-ASR 不可用时，要明确记录错误，不能生成虚假的转写内容。
+本项目原创插件代码采用 [Apache License 2.0](LICENSE)，版权与归属见 [NOTICE](NOTICE)。DSH 使用 MIT；VoceChat 服务端、官方镜像和 Web 客户端具有各自的许可，其中包含商业使用限制或 copyleft 条款。本项目不重新许可这些上游组件。
 
-### 4.3 音频理解扩展
-
-预留 `AudioUnderstandingProvider` 接口。
-
-未来可接入 Qwen Omni，对原始语音进行：
-
-- 语音内容识别。
-- 语速、音量、语调等声学线索分析。
-- 笑声、叹气、哭声等非语言声音识别。
-- 环境声音与背景音描述。
-- 不确定的情绪线索分析。
-
-**语音转写和音频理解必须是两个可以独立启用的功能。**
-
-第一阶段优先保证转写稳定，音频理解可以只实现接口及可扩展架构，不强制接入模型。
-
-## 五、多模态消息发送
-
-这是第二个新增重点。
-
-### 5.1 文字发送
-
-支持：
-
-- 普通文本。
-- 多行文本。
-- 回复指定消息。
-- 主动发送。
-- 根据 VoceChat 能力进行必要的长文本分段。
-
-### 5.2 图片发送
-
-支持：
-
-- 发送本地图片。
-- 发送允许访问的远程图片。
-- PNG、JPEG、WebP 等常用格式。
-- 一次发送多张图片。
-- 文字与图片组合回复。
-
-图片应通过插件的文件上传和消息发送接口处理，不依赖 `[img:/绝对路径]` 这样的文本协议。
-
-### 5.3 语音发送
-
-支持两种方式：
-
-**方式 A：发送已有音频**
-
-Agent 可以选择本地音频文件，通过插件上传并作为 VoceChat 语音或音频消息发送。
-
-**方式 B：文字转语音**
-
-预留可配置的 TTS Provider：
-
-- 输入文字。
-- 调用 TTS 模型生成语音。
-- 转换成 VoceChat 支持的格式。
-- 上传并发送。
-
-第一阶段优先实现已有音频文件发送，TTS 可作为独立扩展能力。
-
-不要强制每条回复都生成语音。
-
-### 5.4 组合消息
-
-统一支持以下出站内容：
-
-- 纯文字。
-- 纯图片。
-- 纯语音。
-- 文字 + 图片。
-- 文字 + 语音。
-- 文字 + 多张图片 + 音频附件。
-
-由统一的消息发送层根据 VoceChat 实际 API 能力决定如何上传及发送。
-
-如果平台不支持单个消息气泡携带多种媒体，应按顺序拆分发送，并尽量保持逻辑关联。
-
-## 六、Agent 工具接口
-
-注册独立的消息工具，例如：
-
-- `voce_send_text`
-- `voce_send_image`
-- `voce_send_audio`
-- `voce_send_file`
-- `voce_send_message`（统一组合消息接口）
-
-具体工具命名遵守 DSH 规范。
-
-发送目标必须明确，并校验 UID/GID 权限。
-
-支持 Agent 主动发消息，也支持常规用户消息的自动回复。
-
-不应要求模型自己拼接图片标记、音频标记、上传 URL 或 API 请求参数。
-
-支持安静结束，不回复时由桥接层完成处理。
-
-## 七、Session 与消息路由
-
-支持绑定现有 DSH Session，保留已有汐月的 SOUL、长期记忆、人格和聊天历史。
-
-区分：
-
-- VoceChat 私聊。
-- VoceChat 群聊。
-- DSH Web。
-- QQ。
-- 其他系统内部消息。
-
-必须正确处理回复目标，防止跨渠道误发。
-
-同一 Session 收到多个来源消息时，需要安全排队，避免产生冲突的 Agent Turn。
-
-## 八、配置管理
-
-插件应提供配置界面或等效配置入口，包括：
-
-- VoceChat 服务地址。
-- Bot API Key。
-- Webhook 端口和路径。
-- UID/GID 白名单。
-- Session 绑定。
-- ASR Provider 与模型。
-- ASR API 地址及鉴权。
-- 音频格式、时长和大小限制。
-- TTS Provider（可选）。
-- 自动回复与主动发送开关。
-- 临时文件目录。
-- 日志级别。
-
-所有敏感凭据应安全保存，不得出现在模型上下文或普通日志。
-
-## 九、安全和稳定性
-
-- 验证 Webhook 来源及签名（若接口支持）。
-- 对入站消息进行去重和来源校验。
-- 限制媒体大小、音频时长和请求超时。
-- 下载媒体时防止 SSRF 和不可信文件路径访问。
-- 处理音频转换失败、ASR 超时和附件上传失败。
-- 临时文件定期清理。
-- 避免 Bot 自发自收造成消息循环。
-- 外部消息不得提升 DSH 工具权限。
-- 不允许通过消息附件访问任意本地文件。
-- 不修改 DSH 核心程序和现有 SOUL/记忆文件。
-
-## 十、测试要求
-
-测试至少覆盖：
-
-1. VoceChat 私聊、群聊文本收发。
-2. 收到语音并成功转写。
-3. 转写失败时正确处理。
-4. 接收图片和普通文件。
-5. 主动发送文字、图片及语音。
-6. 文字与多个媒体组合发送。
-7. 文件格式不支持时的错误处理。
-8. ASR 服务不可用及超时。
-9. UID/GID 白名单与消息去重。
-10. 多渠道共享 Session 的并发安全。
-11. Bot 回环保护。
-12. 重启后连接和 Session 恢复。
-13. 插件启用、禁用及异常恢复。
-
-使用 Mock VoceChat API 和测试 DSH Session 完成自动化测试。
-
-有条件时进行真实服务联调，并区分模拟测试与实际测试结果。
-
-## 十一、最终交付
-
-- `dsh-vocechat-bridge` 完整源码。
-- 可安装的 DSH 插件。
-- 配置说明及配置示例。
-- ASR Provider 扩展文档。
-- 多模态消息发送工具说明。
-- 自动化测试。
-- 实际运行验证结果。
-- 从旧 Webhook 迁移的操作指南。
-- 已知限制及回滚方法。
-
-## 十二、开发执行要求
-
-先调查接口，再设计架构，然后实际完成代码与测试。
-
-优先完成文本桥接、语音转写、图片发送和已有音频发送，之后完善 TTS 扩展能力。
-
-不要只输出技术方案。
-
-不要修改人格、记忆、自主定时任务或其他不相关模块。
-
-不覆盖现有 VoceChat 桥接配置；正式切换前先备份并验证。
-
-除真正阻塞开发的事项外，自主解决实现细节并记录取舍。
+完整范围、上游链接及保留声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。本项目为独立第三方集成，不代表 DeepSeek 或 Privoce 官方。

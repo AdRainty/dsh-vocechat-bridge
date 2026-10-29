@@ -75,8 +75,7 @@ export function apply(ctx: any, rawConfig: any) {
   const autoStart=new AutoStartController({ready,enabled:()=>settings.config().enabled,runtime,
     onError:code=>logger.warn(`BRIDGE_AUTO_START_WAITING: ${code}`)});
   registerVoceTools(ctx,runtime,runtime.session,defineTool);
-  // Match dsh-bili-scroll: the settings API belongs to DSH's web server, not to
-  // the bridge listener, so a stopped bridge can still be configured and started.
+  // Keep settings on DSH's web server so a stopped bridge can still be configured.
   const handler=createSettingsHandler({settings,ready,runtime,resolveCredential,credentials:()=>{
     try{return typeof ctx.get==='function'?ctx.get('credentials'):ctx.credentials;}catch{return undefined;}
   }});

@@ -4,7 +4,7 @@ v0.3.1 内置标准 OpenAI 与小米 MiMo 的语音识别、合成。厂家差�
 
 ## 设置页
 
-安装或更新后打开 **设置 → VoceChat**，入口与 `dsh-bili-scroll` 的“刷B站”同在设置左侧导航。已运行的链接安装更新时，先在插件页关闭再打开该插件一次，然后刷新界面加载新客户端；后续配置和后端操作无需重启 DSH。
+安装或更新后打开 **设置 → VoceChat**，入口位于设置左侧导航。已运行的链接安装更新时，先在插件页关闭再打开该插件包一次，然后刷新界面加载新客户端；后续配置和后端操作无需重启 DSH。
 
 页面上方提供 **启动桥接后端 / 停止 / 保存并重载后端**。设置接口由 DSH 的 webServer 提供，不依赖桥接监听是否启动；初次安装可以先填服务地址、Bot UID、Key、固定 Session、白名单与 Webhook 参数，再启动。
 
@@ -16,7 +16,7 @@ v0.3.1 内置标准 OpenAI 与小米 MiMo 的语音识别、合成。厂家差�
 4. 合成可选择 WAV/MP3、音色 ID 和声线/语气描述。MiMo voicedesign 需要填写描述。
 5. 保存后配置持久化到插件状态目录的 `settings.json`，下一次语音请求生效；已有请求继续使用开始时的设置。连接参数修改后点击重载。
 
-页面按 `dsh-bili-scroll` 的实现注册在 `settings.section`，只注入 `slots`，不会因缺少 `configForms`、locale 或远端 credentials 客户端服务而消失。读写通过同源 `/api/vocechat-bridge/settings`，只接受本机请求；写操作检查来源、JSON 格式和配置版本。页面保存过的字段以插件本地覆盖值为准，未保存过的字段继续跟随 profile/defaults，避免宿主 root Include 写入失败后开关回弹。密码不写入本地设置 JSON。
+页面注册在 `settings.section`，只注入 `slots`。读写通过同源 `/api/vocechat-bridge/settings`，只接受本机请求；写操作检查来源、JSON 格式和配置版本。页面保存过的字段以插件本地覆盖值为准，未保存过的字段继续跟随 profile/defaults。密码不写入本地设置 JSON。
 
 密码输入只用于写入 DSH credentials；已有 Key 不会读回页面。留空保留原 Key。配置文件保存凭据引用名；后台每次请求从 credentials 或同名环境变量解析，不在日志中输出凭据或服务响应正文。
 

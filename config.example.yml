@@ -1,24 +1,24 @@
 # 在 profile 的 cordis.patch.yml 按 id 覆盖；服务凭据由 credentials 服务或环境变量提供。
-# 本示例不用旧桥接的8899端口，不会覆盖旧配置；填好后才启用。
+# 域名为占位值，身份与白名单默认未配置；填写自己的值后才启用。
 - id: vocechat-bridge
   config:
     enabled: false
     baseUrl: 'https://chat.example.com'
-    botUid: 2
+    botUid: 0 # 填写实际 Bot UID
     botApiKeyRef: VOCECHAT_BOT_API_KEY
     webhookSecretRef: '' # 可选：留空接收明文 JSON；启用访问令牌校验时填写引用名，VoceChat 的 AES secret 留空
     webhookHost: 127.0.0.1
     webhookPort: 8898
     webhookPath: /vocehook
-    targetSessionId: 'session-REPLACE-ME'
+    targetSessionId: '' # 填写实际已有 Session ID
     agentPreset: ''
-    userWhitelist: [100]
-    groupWhitelist: [10]
+    userWhitelist: [] # 按需填写允许私聊的 UID
+    groupWhitelist: [] # 按需填写允许接收的 GID
     groupSenderWhitelist: []
     autoReply: true
     allowProactive: false
-    allowedLocalRoots: ['K:/Shared/vocechat-outgoing']
-    allowedRemoteOrigins: ['https://media.example.com']
+    allowedLocalRoots: [] # 按需填写允许外发文件的绝对目录
+    allowedRemoteOrigins: [] # 按需填写允许下载媒体的完整 origin
     statePath: ''
     tempDir: ''
     requestTimeoutMs: 30000

@@ -1,4 +1,6 @@
 node_modules/
+dist/
+release-assets/
 .npm-cache/
 *.tgz
 .env
@@ -6,3 +8,15 @@ node_modules/
 !.env.example
 .runtime/
 coverage/
+.host-smoke-*/
+*.log
+.credentials*
+.npmrc
+*.pem
+*.key
+*.p12
+*.pfx
+/secrets/
+/settings.json
+/state.json
+/settings.local.*

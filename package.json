@@ -1,9 +1,18 @@
 {
   "name": "dsh-vocechat-bridge",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "type": "module",
   "description": "Native fixed-session VoceChat bridge for DeepSeek Harness with structured media and ASR",
-  "license": "MIT",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AdRainty/dsh-vocechat-bridge.git"
+  },
+  "homepage": "https://github.com/AdRainty/dsh-vocechat-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/AdRainty/dsh-vocechat-bridge/issues"
+  },
+  "keywords": ["dsh-plugin", "deepseek-harness", "vocechat", "bridge", "asr", "tts"],
   "main": "dist/index.js",
   "exports": {
     ".": "./dist/index.js",
@@ -24,8 +33,12 @@
     "cordis.patch.yml",
     "config.example.yml",
     "README.md",
+    "AGENTS.md",
     "docs",
-    "LICENSE"
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_NOTICES.md",
+    "licenses"
   ],
   "engines": {
     "node": ">=22.19.0"

@@ -46,7 +46,7 @@ async function verifySettingsClient(root, entry, config) {
     window:{__ModuleLoader__:{load(spec){assert.equal(spec.id,'dsh-vocechat-bridge');client=spec.factory(name=>{assert.equal(name,'react');return react;});}}},
   });
   const ctx = {
-    // The same minimal dependency as dsh-bili-scroll: no configForms/remote/locale.
+    // Only slots are required; no configForms/remote/locale services.
     slots:{inject:(_name,fn)=>fn(),register:(spec,component)=>{registration=spec;card=component;return ()=>{};}},effect:fn=>fn(),
   };
   client.apply(ctx);

@@ -1,0 +1,55 @@
+name: Release plugin
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag matching package.json
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.19.0'
+          cache: npm
+      - name: Check tag and package version
+        run: |
+          node -e 'const p = require("./package.json"); if (process.env.RELEASE_TAG !== "v" + p.version) throw new Error("Tag must match package.json version");'
+      - run: npm ci --legacy-peer-deps
+      - run: npm run build
+      - name: Package plugin with built dist
+        run: |
+          mkdir -p release-assets
+          npm pack --ignore-scripts --pack-destination release-assets
+          cd release-assets
+          sha256sum *.tgz > SHA256SUMS
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/*.tgz release-assets/SHA256SUMS --clobber
+          else
+            gh release create "$RELEASE_TAG" release-assets/*.tgz release-assets/SHA256SUMS --verify-tag --title "$RELEASE_TAG" --generate-notes
+          fi

@@ -49,7 +49,7 @@ v0.2.0 先按来源/会话/发送者完成独立防抖并封批，再准备附�
 
 完整插件入口也已执行本机 smoke：加载实际 `dist/index.js`，使用真实 Schemastery 解析默认配置、真实 `defineTool` 编译和校验工具，在假 Cordis ctx 中调用 `apply`、effect 与重复 dispose。结果：默认 disabled、十个工具注册成功、`listenCalls:0`、正常清理、用户配置写入/模型调用/真实消息均为零。
 
-v0.3.0 只在官方 `plugins.item/configForms` 组合中验证，用户实际界面没有出现入口。v0.3.1 改为照本机 `dsh-bili-scroll@2.2.1`：客户端只注入 `slots`，在 `settings.section` 注册“VoceChat”；宿主可选注入 `webServer`，挂载 `/api/vocechat-bridge/settings`。不再依赖官方插件管理器插槽、locale 或 remote 客户端服务。
+客户端只注入 `slots`，在 `settings.section` 注册“VoceChat”；宿主可选注入 `webServer`，挂载 `/api/vocechat-bridge/settings`。
 
 表单值保存在插件自己的 `settings.json`，优先于 profile 同名值，避免桌面启动方式缺少 root Include 时宿主设置写入失败。原 Config 和语音 `.volatile()` 保留兼容；凭据通过宿主 `credentials.describe/set` 操作，不回传实际 Key。启动/停止/重载由 `BridgeRuntime` 串行执行，重建 Bridge 和 SessionPort；工具通过动态代理使用当前实例，停止设置页不会停止 DSH 的 webServer 或共享 Agent。客户端在只有 slots 的测试环境验证注册和保存；本地真实 HTTP 验证监听启停重载，未在用户窗口中点击操作。
 

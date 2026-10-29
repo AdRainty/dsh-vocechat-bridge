@@ -4,23 +4,25 @@
 
 ## 安装
 
-仓库自带 `dist/`，可直接安装目录或 npm 包；开发修改后重新构建。安装会增加默认禁用的 `vocechat-bridge` 插件项，不覆盖原桥接。
+源码仓库不含 `dist/`，目录安装前需要先构建；Release tgz 已包含构建产物。安装会增加默认禁用的 `vocechat-bridge` 插件项，不覆盖原桥接。
 
 ```powershell
-cd K:\Code\Tools\dsh-plugins\dsh-vocechat-bridge
+cd ./dsh-vocechat-bridge
 npm ci --legacy-peer-deps
 npm run check
 npm pack
-dsh plugin --profile web add "K:\Code\Tools\dsh-plugins\dsh-vocechat-bridge"
+dsh plugin --profile web add "$PWD"
 ```
 
-也可以把 `dsh-vocechat-bridge-0.4.0.tgz` 交给 DSH 插件安装器。链接安装更新代码后，在插件页关闭再打开该插件一次，并刷新界面加载新的 client；不必重启整个 DSH。“保存并重载后端”应用当前已加载版本的连接配置，不会替换内存中的插件代码。开发链接安装时，宿主依赖必须能从插件的真实路径解析；遵循宿主安装器解析 peer dependencies 的方式，若手工建立依赖链接，指向实际 profile 的 `node_modules/@deepseek-ai`，不要复制凭据文件。
+也可以把 `dsh-vocechat-bridge-0.4.2.tgz` 交给 DSH 插件安装器。链接安装更新代码后，在插件页关闭再打开该插件包一次，并刷新界面加载新的 client；不必重启整个 DSH。“保存并重载后端”应用当前已加载版本的连接配置，不会替换内存中的插件代码。开发链接安装时，宿主依赖必须能从插件的真实路径解析；遵循宿主安装器解析 peer dependencies 的方式，若手工建立依赖链接，指向实际 profile 的 `node_modules/@deepseek-ai`，不要复制凭据文件。
 
-本次交付没有执行上述安装命令，也没有变更已运行的 profile。`npm ci --legacy-peer-deps` 用于独立开发和测试；运行插件时三个 peer dependency 由 DSH 提供。
+正式发布包见 [GitHub Releases](https://github.com/AdRainty/dsh-vocechat-bridge/releases)，其 tgz 包含编译后的 `dist/`，源码仓库与自动生成的源码压缩包需自行构建。
+
+`npm ci --legacy-peer-deps` 用于独立开发和测试；运行插件时三个 peer dependency 由 DSH 提供。安装和升级操作需在实际使用的 profile 中进行。
 
 ## 最小配置
 
-打开 **设置 → VoceChat**，填写实际服务地址、机器人 UID、固定 Session ID、白名单和 Webhook 参数，点击“启动桥接后端”。页面与“刷B站”一样挂在设置导航中，桥接停止时仍可使用。也可以将 [config.example.yml](../config.example.yml) 合并到 profile 作为初始配置。
+打开 **设置 → VoceChat**，填写实际服务地址、机器人 UID、固定 Session ID、白名单和 Webhook 参数，点击“启动桥接后端”。入口位于设置导航中，桥接停止时仍可使用。也可以将 [config.example.yml](../config.example.yml) 合并到 profile 作为初始配置。
 
 页面保存的字段写入与 state.json 同目录的 `settings.json`，优先于 profile 同名值，未保存字段继续跟随 profile/defaults。语音配置保存后下一次请求生效；连接参数、白名单、Session、防抖窗口等修改后点击“保存并重载后端”。停止会持久化 `enabled:false` 并释放监听，启动/重载会持久化 `enabled:true`；下次 DSH 加载时恢复这一选择。操作期间仍沿用既有队列与去重状态，不创建替代 Session，不停止共享 Agent。
 
@@ -32,7 +34,7 @@ Webhook 建议绑定 loopback，由反向代理转发。精确 Webhook 路径的
 
 VoceChat 后台的 **16 字节 Secret 是可选的消息加密设置**，留空即推送明文 JSON；设置后需要 AES 解密和 PKCS7 去填充。当前插件接收明文，所以该字段留空。插件的访问令牌也是可选项，与加密 Secret 分开；不使用令牌时 `webhookSecretRef` 留空即可启动。沿用旧配置且未设置令牌值时，在页面关闭该校验开关并重载。**Bot API Key 是调用 VoceChat API 的必填凭据，不能与这两个可选项混淆。**
 
-首次配置完成后，将 `enabled` 改为 `true`。默认端口 **8898**，与旧桥接的 **8899** 分开。空白名单拒绝全部对应渠道：私聊使用 UID；群聊使用 GID。`groupSenderWhitelist` 可进一步限制授权群中的成员，空数组代表不加这一层限制。
+首次配置完成后，将 `enabled` 改为 `true`。默认端口 **8898**，部署时确认端口可用。空白名单拒绝全部对应渠道：私聊使用 UID；群聊使用 GID。`groupSenderWhitelist` 可进一步限制授权群中的成员，空数组代表不加这一层限制。
 
 ## 配置项
 
