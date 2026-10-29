@@ -8,7 +8,7 @@
 2. 安装目标版本的 Release tgz，或更新源码后执行 `npm ci --legacy-peer-deps` 与 `npm run build`。源码仓库不包含 `dist/`，发布 tgz 包含已构建文件。
 3. 重载插件包，刷新设置页。开启 HMR 的宿主也可能自动加载代码更新；“保存并重载后端”只重建当前已加载代码的后端实例。
 4. 检查 Bot UID、已有 Session ID、白名单、凭据引用和 Webhook 监听配置。保留原 Session ID 可继续使用同一会话的历史、人格与记忆，不需要新建替代会话。
-5. 启动桥接，检查 Webhook GET 返回 200。VoceChat 的 AES Secret 留空；插件的访问令牌校验按需启用。
+5. 启动桥接并配置已验证的入口形式 `https://bridge.example.com/vocehook?secret=YOUR_WEBHOOK_TOKEN`，令牌需与插件中配置的凭据值一致。GET 返回 200 验证地址，POST 单独校验令牌；VoceChat 的可选 `set secret` 加密接口保持未设置。
 6. 在授权的测试私聊或群聊发送文字和媒体，核对 DSH 入站、原目标回复、语音及白名单。使用独立测试实例时，为其指定不同的状态与暂存目录。
 
 更换 Webhook 接收端时，保留配置备份，并确保同一 Bot 的相同事件只有一个有效处理入口；不同实例的本地去重不能阻止跨实例重复回复。
@@ -20,6 +20,7 @@
 - **v0.4.0** 增加同会话历史背景、最近 N 条历史工具和入站诊断。
 - **v0.4.1** 修复内部记忆/时间上下文被误判为混合来源；历史查询独立校验身份和白名单，混合回合显式发送按主动发送策略处理。
 - **v0.4.2** 整理公开文档和许可，源码不再跟踪 `dist/`；运行实现与状态格式保持兼容。
+- **v0.4.3** 更正 Webhook 地址和令牌说明，沿用已验证的带 query 令牌接入方式；运行实现和默认值不变。
 
 状态和防抖的升级、恢复规则见 [DEBOUNCE.md](DEBOUNCE.md)。已完成与结果不确定的批次不会在升级后自动补发。降级到不认识 v2 的版本前，应停止实例并恢复该版本对应的备份，不要把当前状态强行交给旧格式读取器。
 
@@ -29,7 +30,7 @@
 
 插件页面保存到 `settings.json` 的字段优先于 profile 同名值。凭据字段填写的是 DSH credentials 或环境变量的**引用名**，实际 Key 不保存在插件设置文件中。
 
-VoceChat 后台的 AES Secret 与插件可选的 Webhook 访问令牌属于不同功能。当前接收端处理明文 JSON，AES Secret 留空即可；Bot API Key 仍是调用 Bot API 所必需的凭据。
+Webhook URL 的 `?secret=...` 用于插件的访问令牌认证，消息内容仍可为明文 JSON。VoceChat 可选的 `set/get secret` API 才控制 AES 内容加密；当前接入方式不启用该接口。Bot API Key 用于调用 Bot API，独立于这两个设置。
 
 ### 回复目标
 

@@ -2,7 +2,7 @@
 
 连接 [DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness) 与 [VoceChat](https://voce.chat/) 的第三方插件。在 VoceChat 私聊或群聊中使用已有 DSH 会话，收发文字、图片、文件与语音，并保留该会话原有的人格、记忆和工具权限。
 
-**当前版本：0.4.2 · 许可证：Apache-2.0**
+**当前版本：0.4.3 · 许可证：Apache-2.0**
 
 - [GitHub](https://github.com/AdRainty/dsh-vocechat-bridge)
 - [GitLab](https://gitlab.adrainty.online/dsh-plugins/dsh-vocechat-bridge)
@@ -45,7 +45,7 @@ dsh plugin --profile web add "$PWD"
 
 源码仓库不保留 `dist/`；上述构建步骤会生成插件入口 `dist/index.js`。运行时所需的三个 `@deepseek-ai/*` peer dependency 由 DSH 宿主提供。
 
-也可以直接下载 [GitHub Releases](https://github.com/AdRainty/dsh-vocechat-bridge/releases) 中的插件 tgz。发布包内含 `dist/`、客户端入口、配置和许可文件，无需自行编译；可通过 DSH 插件安装器安装。维护者运行 `npm pack` 可生成相同结构的 `dsh-vocechat-bridge-0.4.2.tgz`。
+也可以直接下载 [GitHub Releases](https://github.com/AdRainty/dsh-vocechat-bridge/releases) 中的插件 tgz。发布包内含 `dist/`、客户端入口、配置和许可文件，无需自行编译；可通过 DSH 插件安装器安装。维护者运行 `npm pack` 可生成相同结构的 `dsh-vocechat-bridge-0.4.3.tgz`。
 
 链接安装更新代码后，需要重载**插件包**才能替换已加载模块；宿主启用 HMR 时也可能自动重载。“保存并重载后端”用于应用连接配置，不负责重新导入代码。详见[安装与运行](docs/USAGE.md)。
 
@@ -54,10 +54,13 @@ dsh plugin --profile web add "$PWD"
 1. 在 VoceChat 创建 Bot，取得 Bot API Key 和 Bot 自身 UID。
 2. 在 DSH 打开“设置 → VoceChat”，填写 VoceChat 基址、Bot UID、已有 Session ID，以及允许通信的私聊 UID / 群聊 GID。
 3. 保存 Bot Key 到 DSH 凭据库。配置中的 `botApiKeyRef` 填引用名，例如 `VOCECHAT_BOT_API_KEY`，不要把真实 Key 写进 YAML、源码或仓库。
-4. 配置监听地址、端口和反向代理，启动桥接。把 VoceChat Webhook 指向可从 VoceChat 服务端访问的地址，例如 `https://bridge.example.com/vocehook`。
-5. 验证 Webhook：GET 应返回 200。随后发送一条授权私聊或群聊消息，检查它是否进入所绑定的 DSH 会话，以及回复是否回到原目标。
+4. 使用已验证的访问令牌模式：在插件中开启“校验 Webhook 访问令牌”，保存专用令牌，并将 `webhookSecretRef` 指向相应凭据引用，例如 `VOCECHAT_WEBHOOK_TOKEN`。配置监听和反向代理后启动桥接。
+5. 在 VoceChat 填写 Webhook：`https://bridge.example.com/vocehook?secret=YOUR_WEBHOOK_TOKEN`。把占位值替换为同一实际访问令牌的 URL 编码值。
+6. GET 返回 200 只表示地址验证通过；POST 还需通过访问令牌校验。发送一条授权私聊或群聊消息，检查它是否进入绑定的 DSH 会话，以及回复是否回到原目标。
 
-**VoceChat 后台的 AES Secret 留空。** 当前插件接收明文 JSON；该加密 Secret 是可选项。插件另有可选的 Webhook 访问令牌校验，和 VoceChat 的 AES 加密设置是两个不同功能。Bot API Key 则是访问 Bot API 所需的凭据。
+上述带 `?secret=...` 的地址已验证可用，POST 内容仍是明文 JSON。URL 中的 `secret` 是**本插件的访问令牌**，用于接收端认证。
+
+VoceChat 文档中的 `set/get secret` 是另一套**可选消息加密接口**：不设置时发送原始 JSON；设置 16 字节字符串后，服务端才会对推送内容做 AES 加密，接收端需要解密并进行 PKCS#7 去填充。当前插件不做 AES 解密，因此使用上述接入方式时保持该加密接口未设置。Bot API Key 独立用于访问 Bot API。
 
 配置文件方式见 [config.example.yml](config.example.yml)。示例域名和 ID 均为占位值，实际连接信息需由部署者填写。
 

@@ -14,7 +14,7 @@ npm pack
 dsh plugin --profile web add "$PWD"
 ```
 
-也可以把 `dsh-vocechat-bridge-0.4.2.tgz` 交给 DSH 插件安装器。链接安装更新代码后，在插件页关闭再打开该插件包一次，并刷新界面加载新的 client；不必重启整个 DSH。“保存并重载后端”应用当前已加载版本的连接配置，不会替换内存中的插件代码。开发链接安装时，宿主依赖必须能从插件的真实路径解析；遵循宿主安装器解析 peer dependencies 的方式，若手工建立依赖链接，指向实际 profile 的 `node_modules/@deepseek-ai`，不要复制凭据文件。
+也可以把 `dsh-vocechat-bridge-0.4.3.tgz` 交给 DSH 插件安装器。链接安装更新代码后，在插件页关闭再打开该插件包一次，并刷新界面加载新的 client；不必重启整个 DSH。“保存并重载后端”应用当前已加载版本的连接配置，不会替换内存中的插件代码。开发链接安装时，宿主依赖必须能从插件的真实路径解析；遵循宿主安装器解析 peer dependencies 的方式，若手工建立依赖链接，指向实际 profile 的 `node_modules/@deepseek-ai`，不要复制凭据文件。
 
 正式发布包见 [GitHub Releases](https://github.com/AdRainty/dsh-vocechat-bridge/releases)，其 tgz 包含编译后的 `dist/`，源码仓库与自动生成的源码压缩包需自行构建。
 
@@ -30,9 +30,17 @@ dsh plugin --profile web add "$PWD"
 
 敏感值仅存 DSH credentials 或进程环境。配置中的 `botApiKeyRef`、`webhookSecretRef`、`asrApiKeyRef`、`ttsApiKeyRef` 填的是**引用名**。设置页的密码输入框通过插件宿主接口写入 DSH credentials，不读取已有密钥，不把 Key 写入 settings.json。credentials 服务存在时优先解析；未解析到再读取同名环境变量。每次请求重新解析，可以轮换凭据。自定义 OpenAI 兼容的无鉴权本地服务允许空引用。
 
-Webhook 建议绑定 loopback，由反向代理转发。精确 Webhook 路径的 GET 无需鉴权，直接返回 200，供 VoceChat 验证地址；该请求不接收消息、不返回会话数据。**POST 默认直接接收明文 JSON，不要求 Secret**。只有在设置页开启“校验 Webhook 访问令牌”时，才按 `webhookSecretRef` 解析令牌并校验 `Authorization: Bearer <token>` 或 URL 的 `?secret=<token>`；开启后令牌缺失会明确报错，不会悄悄取消校验。反向代理可代为注入 Authorization，日志应隐藏 query。插件日志不记录 URL、请求体或凭据。
+Webhook 建议绑定 loopback，由反向代理转发。已验证的访问令牌模式填写为：
 
-VoceChat 后台的 **16 字节 Secret 是可选的消息加密设置**，留空即推送明文 JSON；设置后需要 AES 解密和 PKCS7 去填充。当前插件接收明文，所以该字段留空。插件的访问令牌也是可选项，与加密 Secret 分开；不使用令牌时 `webhookSecretRef` 留空即可启动。沿用旧配置且未设置令牌值时，在页面关闭该校验开关并重载。**Bot API Key 是调用 VoceChat API 的必填凭据，不能与这两个可选项混淆。**
+```text
+https://bridge.example.com/vocehook?secret=YOUR_WEBHOOK_TOKEN
+```
+
+在设置页开启“校验 Webhook 访问令牌”，把实际令牌保存在 DSH credentials 中，`webhookSecretRef` 指向该引用，例如 `VOCECHAT_WEBHOOK_TOKEN`。URL 中填写实际令牌的 URL 编码值，POST 接收端按同一值校验。反向代理也可以改为注入 `Authorization: Bearer <token>`。日志应隐藏 query，插件日志不记录 URL、请求体或凭据。
+
+精确 Webhook 路径的 GET 无需鉴权，直接返回 200，供 VoceChat 验证地址；该请求不接收消息、不返回会话数据。**GET 验证通过不代表 POST 已通过认证。** 启用校验后，POST 缺少或携带错误令牌会返回 401；令牌凭据本身缺失也会明确报错。`webhookSecretRef:''` 可以关闭这项访问校验，这不改变 JSON 是否加密。
+
+VoceChat 文档的 `set/get secret` 接口控制可选的**消息内容加密**。不设置时，POST 为原始 JSON，包括上述带 `?secret=...` 的接入方式；通过 `set secret` 设置 16 字节字符串后，服务端才进行 AES 加密，接收端需先解密再做 PKCS#7 去填充。当前插件处理明文 JSON，使用本接入方式时不启用该加密接口。**Bot API Key** 用于调用 Bot API；**URL 的 secret** 用于插件认证；**VoceChat 加密 secret** 用于 AES，三个用途相互独立。
 
 首次配置完成后，将 `enabled` 改为 `true`。默认端口 **8898**，部署时确认端口可用。空白名单拒绝全部对应渠道：私聊使用 UID；群聊使用 GID。`groupSenderWhitelist` 可进一步限制授权群中的成员，空数组代表不加这一层限制。
 

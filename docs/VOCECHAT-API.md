@@ -32,7 +32,9 @@ Bot 消息能出现在历史和 SSE 中，却不一定触发 Webhook。已验证
 
 ## Webhook 鉴权与加密
 
-官方文档没有通用的 HMAC 签名 header。文档描述的是可选 16 字节 secret 和 AES 加密，而不是请求签名。当前插件接收明文 JSON；精确路径的 GET 无需鉴权即返回 200，仅用于地址验证；POST 默认不要求 Secret，仅在显式设置 `webhookSecretRef` 后校验 query/Authorization。VoceChat 的 AES Secret 留空即可推送明文；不要把 AES 密文直接接入此 JSON 接收器，也不要把插件的可选访问令牌当作 VoceChat 原生签名。
+已验证的接入地址为 `https://bridge.example.com/vocehook?secret=YOUR_WEBHOOK_TOKEN`：这里的 query `secret` 是插件的访问令牌，开启校验后按 `webhookSecretRef` 指向的凭据验证 POST，也支持代理提供 Authorization。GET 不要求该令牌并返回 200，因而地址验证与消息认证需要分别核对。
+
+VoceChat 文档的 `set/get secret` 是可选的消息内容加密 API，不是通用 HMAC 签名 header。不设置时直接推送原始 JSON；设置 16 字节字符串后才会 AES 加密，接收端需解密和 PKCS#7 去填充。当前插件没有 AES 解密步骤，使用上述接入方式时不启用该加密 API。query 令牌本身不会使消息内容变成 AES 密文。
 
 ## 传输安全与凭据
 
