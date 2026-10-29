@@ -6,5 +6,7 @@ export declare function registerVoceTools(ctx: {
     tools: {
         register(tool: any): any;
     };
-}, bridge: Pick<Bridge, 'send' | 'status'>, session: DshSessionPort, defineTool: DefineTool): void;
+}, bridge: Pick<Bridge, 'send'> & {
+    status(): unknown;
+}, session: Pick<DshSessionPort, 'outboundMode' | 'noteSent' | 'quiet'>, defineTool: DefineTool): void;
 export {};

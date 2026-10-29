@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 export const defaults = {
     enabled: false, baseUrl: '', botApiKeyRef: 'VOCECHAT_BOT_API_KEY', botUid: 0,
-    webhookHost: '127.0.0.1', webhookPort: 8898, webhookPath: '/vocehook', webhookSecretRef: 'VOCECHAT_WEBHOOK_SECRET',
+    webhookHost: '127.0.0.1', webhookPort: 8898, webhookPath: '/vocehook', webhookSecretRef: '',
     userWhitelist: [], groupWhitelist: [], groupSenderWhitelist: [],
     targetSessionId: '', agentPreset: '', autoReply: true, allowProactive: false,
     statePath: '', tempDir: '', allowedLocalRoots: [], allowedRemoteOrigins: [],
@@ -58,6 +58,8 @@ export function parseConfig(input = {}) {
         throw new Error('Invalid webhook/batch/log config');
     if (c.privateQuietMs > 3600_000 || c.groupQuietMs > 3600_000 || c.maxWaitMs > 3600_000)
         throw new Error('Invalid debounce limits');
+    if (c.asrTimeoutMs > 0xffffffff || c.ttsTimeoutMs > 0xffffffff)
+        throw new Error('Invalid speech timeout');
     // Nonzero legacy values explicitly override both quiet periods. Zero disables
     // this compatibility alias; new configurations use the fields above.
     if (c.mergeWindowMs)
@@ -97,8 +99,8 @@ export function parseConfig(input = {}) {
     const home = process.env.DSH_HOME || join(homedir(), '.dsh');
     c.statePath = resolve(c.statePath || join(home, 'vocechat-bridge', 'state.json'));
     c.tempDir = resolve(c.tempDir || join(home, 'vocechat-bridge', 'tmp'));
-    if (c.enabled && (!c.baseUrl || !c.targetSessionId || !c.botUid || !c.botApiKeyRef || !c.webhookSecretRef))
-        throw new Error('Enabled bridge requires baseUrl, targetSessionId, botUid and credential references');
+    if (c.enabled && (!c.baseUrl || !c.targetSessionId || !c.botUid || !c.botApiKeyRef))
+        throw new Error('Enabled bridge requires baseUrl, targetSessionId, botUid and Bot credential reference');
     if (c.audioUnderstandingProvider)
         throw new Error('Audio understanding providers must be registered programmatically');
     return c;

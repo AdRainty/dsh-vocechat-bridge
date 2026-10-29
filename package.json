@@ -1,6 +1,6 @@
 {
   "name": "dsh-vocechat-bridge",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "description": "Native fixed-session VoceChat bridge for DeepSeek Harness with structured media and ASR",
   "license": "MIT",
@@ -38,7 +38,7 @@
   },
   "dsh": {
     "client": {
-      "inject": ["@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-ui-settings", "@deepseek-ai/dsh-client-ui-plugin-manager", "@deepseek-ai/dsh-api-remotes"],
+      "inject": ["@deepseek-ai/dsh-client-runtime", "@deepseek-ai/dsh-client-ui-settings"],
       "platform": "web"
     },
     "bundle": {

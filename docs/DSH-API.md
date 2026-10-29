@@ -48,7 +48,13 @@ v0.2.0 先按来源/会话/发送者完成独立防抖并封批，再准备附�
 
 完整插件入口也已执行本机 smoke：加载实际 `dist/index.js`，使用真实 Schemastery 解析默认配置、真实 `defineTool` 编译和校验工具，在假 Cordis ctx 中调用 `apply`、effect 与重复 dispose。结果：默认 disabled、八个工具注册成功、`listenCalls:0`、正常清理、用户配置写入/模型调用/真实消息均为零。
 
-v0.3.0 的语音设置字段通过 `.volatile()` 接入 `dsh-settings`；该宿主尚不自动生成页面，插件提供 `./client` 导出和 `dsh.client` 声明，由客户端注册 `plugins.item`。表单读取 `ctx.configForms.get('vocechat-bridge')`，使用 `mutate(ops, revision)` 保存，并通过 `remote.credentials.describe/set` 查询 Key 是否存在或写入 Key；不读回密钥。后端在每次语音请求开始时读取 Config reference 的 `.get()`，因此无需重启桥接。客户端注册和保存处理已在 smoke 中通过假设置服务验证，尚未修改真实 profile。
+v0.3.0 只在官方 `plugins.item/configForms` 组合中验证，用户实际界面没有出现入口。v0.3.1 改为照本机 `dsh-bili-scroll@2.2.1`：客户端只注入 `slots`，在 `settings.section` 注册“VoceChat”；宿主可选注入 `webServer`，挂载 `/api/vocechat-bridge/settings`。不再依赖官方插件管理器插槽、locale 或 remote 客户端服务。
+
+表单值保存在插件自己的 `settings.json`，优先于 profile 同名值，避免桌面启动方式缺少 root Include 时宿主设置写入失败。原 Config 和语音 `.volatile()` 保留兼容；凭据通过宿主 `credentials.describe/set` 操作，不回传实际 Key。启动/停止/重载由 `BridgeRuntime` 串行执行，重建 Bridge 和 SessionPort；工具通过动态代理使用当前实例，停止设置页不会停止 DSH 的 webServer 或共享 Agent。客户端在只有 slots 的测试环境验证注册和保存；本地真实 HTTP 验证监听启停重载，未在用户窗口中点击操作。
+
+自动启动由 `AutoStartController` 管理，先等设置加载，监听可选 `credentials/webServer` 服务就绪，并对启动失败做有上限间隔的重试。旧的一次性 `ready.then(runtime.start)` 在首次启动失败后不再恢复，已移除。持久 enabled 为 false 或插件卸载时取消重试，避免用户停止后又被后台拉起。
+
+`verify-host.cjs` 还用真实入口连续挂载两次隔离的启用实例：第一轮凭据迟到，第二轮直接读取持久 enabled，两轮均自动建立真实本机监听并返回 GET 200。该检查使用假的凭据/Agent，不会替用户重启整个 DSH。
 
 可复现脚本为 `scripts/verify-host.cjs`，先运行 `npm run build`，再使用安装版本的 Electron 可执行程序运行：
 

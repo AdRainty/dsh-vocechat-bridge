@@ -1,18 +1,22 @@
 # 语音设置与 Provider
 
-v0.3.0 内置标准 OpenAI 与小米 MiMo 的语音识别、合成。厂家差异封装在 Provider 中，桥接和 Agent 使用统一的转写、语音发送结构。Qwen Omni 等音频理解仍是独立扩展，没有混入 ASR。
+v0.3.1 内置标准 OpenAI 与小米 MiMo 的语音识别、合成。厂家差异封装在 Provider 中，桥接和 Agent 使用统一的转写、语音发送结构。Qwen Omni 等音频理解仍是独立扩展，没有混入 ASR。
 
 ## 设置页
 
-安装并重启对应 profile 后，打开 DSH 侧栏 **插件 → VoceChat 语音**：
+安装或更新后打开 **设置 → VoceChat**，入口与 `dsh-bili-scroll` 的“刷B站”同在设置左侧导航。已运行的链接安装更新时，先在插件页关闭再打开该插件一次，然后刷新界面加载新客户端；后续配置和后端操作无需重启 DSH。
+
+页面上方提供 **启动桥接后端 / 停止 / 保存并重载后端**。设置接口由 DSH 的 webServer 提供，不依赖桥接监听是否启动；初次安装可以先填服务地址、Bot UID、Key、固定 Session、白名单与 Webhook 参数，再启动。
+
+连接配置中 **Bot API Key 必填**。“校验 Webhook 访问令牌”默认关闭，不填 Secret 也能启动并接收明文 JSON；只有主动打开开关时才需要提供令牌。VoceChat 后台的可选 AES 加密 Secret 留空。旧版默认的 `VOCECHAT_WEBHOOK_SECRET` 引用若没有对应值，关闭校验开关并重载即可。
 
 1. 语音总开关控制模型调用；识别、合成各有独立开关，默认都关闭。
 2. 分别选择 **OpenAI 标准接口** 或 **小米 MiMo**，填写模型、API 根地址、Key 引用和 Key。
 3. 地址、模型、音色留空时跟随厂家默认值；切换厂家会清除这些覆盖值，并选择该厂家的凭据引用。
 4. 合成可选择 WAV/MP3、音色 ID 和声线/语气描述。MiMo voicedesign 需要填写描述。
-5. 保存后配置持久化到宿主 profile，下一次语音请求生效；已有请求继续使用开始时的设置。
+5. 保存后配置持久化到插件状态目录的 `settings.json`，下一次语音请求生效；已有请求继续使用开始时的设置。连接参数修改后点击重载。
 
-页面注册在宿主 `plugins.item`，使用 `configForms` 的原子字段修改与版本检查。语音字段通过 Config 的 `.volatile()` 声明；本页不是仅导出 Schema 的占位页。服务未加载时不显示，部署只读时禁止保存。bundle 的插件 entry id 应保持 `vocechat-bridge`。
+页面按 `dsh-bili-scroll` 的实现注册在 `settings.section`，只注入 `slots`，不会因缺少 `configForms`、locale 或远端 credentials 客户端服务而消失。读写通过同源 `/api/vocechat-bridge/settings`，只接受本机请求；写操作检查来源、JSON 格式和配置版本。页面保存过的字段以插件本地覆盖值为准，未保存过的字段继续跟随 profile/defaults，避免宿主 root Include 写入失败后开关回弹。密码不写入本地设置 JSON。
 
 密码输入只用于写入 DSH credentials；已有 Key 不会读回页面。留空保留原 Key。配置文件保存凭据引用名；后台每次请求从 credentials 或同名环境变量解析，不在日志中输出凭据或服务响应正文。
 
@@ -98,4 +102,4 @@ ASR 使用 `AsrProvider.transcribe(file, signal)`，统一返回 `{text, languag
 
 识别与合成均限制超时和响应大小，拒绝重定向，不把 API Key 或供应商响应正文拼入错误。FFmpeg/FFprobe 通过参数数组执行，只允许 `file,pipe` 协议，Windows 不弹终端窗口。压缩音频时长检查需要 FFprobe，MiMo 归一化需要 FFmpeg；插件不安装系统依赖或本地模型。
 
-本次仅新增两项功能测试：MiMo 识别请求/真实 WAV 归一化，以及两家 TTS 经合成、校验、上传、语音发送的本地闭环。原有转写和 DSH 附件验证继续复用；这些本地服务返回固定测试内容，不代表已经调用云端模型。
+语音适配只新增两项功能测试：MiMo 识别请求/真实 WAV 归一化，以及两家 TTS 经合成、校验、上传、语音发送的本地闭环。设置页另外验证启停、持久化和凭据迟到时的冷启动恢复。原有转写和 DSH 附件验证继续复用；本地语音服务返回固定测试内容，不代表已经调用云端模型。

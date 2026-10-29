@@ -5,13 +5,16 @@ import { defaults, parseConfig, readConfig, speechFields } from './config.ts';
 import { Bridge } from './bridge.ts';
 import { DshSessionPort } from './dsh.ts';
 import { registerVoceTools } from './tools.ts';
+import { dirname, join } from 'node:path';
+import { PluginSettings, createSettingsHandler, settingsPath } from './settings.ts';
+import { AutoStartController, BridgeRuntime } from './runtime.ts';
 import type { Logger } from './types.ts';
 
 export const name = 'vocechat-bridge';
 export const inject = ['agents', 'tools', 'attachments'];
 const descriptions: Record<string,string> = {
   enabled:'启用桥接（首次配置完成后再启用）',baseUrl:'VoceChat 服务地址',botUid:'机器人 UID，用于自消息过滤',
-  botApiKeyRef:'Bot Key 的凭据引用名',webhookSecretRef:'接收端 POST 访问令牌的凭据引用名；与 VoceChat 可选的 16 字节 AES secret 分开设置',
+  botApiKeyRef:'Bot Key 的凭据引用名',webhookSecretRef:'可选 POST 访问令牌的凭据引用名；留空直接接收明文 JSON，与 VoceChat 可选的 AES secret 分开设置',
   userWhitelist:'允许私聊的 UID，空数组拒绝全部',groupWhitelist:'允许群聊的 GID，空数组拒绝全部',
   groupSenderWhitelist:'群内附加发送者 UID 限制，空数组允许已授权群内成员',
   targetSessionId:'固定 DSH Session ID',agentPreset:'恢复会话使用的可选 preset',
@@ -59,20 +62,31 @@ export function apply(ctx: any, rawConfig: any) {
       return process.env[ref] || undefined;
     }catch{throw new Error('CREDENTIAL_RESOLUTION_FAILED');}
   };
-  const session=new DshSessionPort(ctx,{targetSessionId:config.targetSessionId,agentPreset:config.agentPreset,
-    turnTimeoutMs:config.turnTimeoutMs,maxAttachmentBytes:config.maxMediaBytes},{createUserMessage});
-  const bridge=new Bridge(config,{session,resolveCredential,logger,
-    speechConfig:()=>{
-      const current=readConfig(rawConfig);
-      return Object.fromEntries(speechFields.filter(key=>key in current).map(key=>[key,current[key]]));
-    }});
-  registerVoceTools(ctx,bridge,session,defineTool);
+  const settings=new PluginSettings(join(dirname(config.statePath),'settings.json'),()=>readConfig(rawConfig));
+  const ready=settings.load();
+  const runtime=new BridgeRuntime(()=>settings.config(),current=>{
+    const session=new DshSessionPort(ctx,{targetSessionId:current.targetSessionId,agentPreset:current.agentPreset,
+      turnTimeoutMs:current.turnTimeoutMs,maxAttachmentBytes:current.maxMediaBytes},{createUserMessage});
+    return {session,bridge:new Bridge(current,{session,resolveCredential,logger,speechConfig:()=>settings.raw()})};
+  });
+  const autoStart=new AutoStartController({ready,enabled:()=>settings.config().enabled,runtime,
+    onError:code=>logger.warn(`BRIDGE_AUTO_START_WAITING: ${code}`)});
+  registerVoceTools(ctx,runtime,runtime.session,defineTool);
+  // Match dsh-bili-scroll: the settings API belongs to DSH's web server, not to
+  // the bridge listener, so a stopped bridge can still be configured and started.
+  const handler=createSettingsHandler({settings,ready,runtime,resolveCredential,credentials:()=>{
+    try{return typeof ctx.get==='function'?ctx.get('credentials'):ctx.credentials;}catch{return undefined;}
+  }});
+  ctx.inject?.(['credentials'],()=>{void autoStart.wake();});
+  ctx.inject?.(['webServer'],(scoped:any)=>{
+    void autoStart.wake();
+    return scoped.effect(()=>scoped.webServer.register({kind:'exact',path:settingsPath,handler}));
+  });
   // Cordis awaits async effects before installing their disposer. Return it immediately
   // so disable during startup is also safe and cannot leave a listening socket behind.
   ctx.effect(()=>{
-    let disposed=false;
-    const start=bridge.start().then(async()=>{if(disposed)await bridge.stop();}).catch(()=>logger.error('BRIDGE_START_FAILED: check configuration, credentials, state file and webhook port'));
-    return async()=>{disposed=true;await start;await bridge.stop();session.dispose();};
+    const start=autoStart.wake().catch(()=>logger.error('BRIDGE_START_FAILED: check settings and host services'));
+    return async()=>{await autoStart.dispose();await start;await runtime.dispose();};
   });
-  return bridge;
+  return runtime;
 }

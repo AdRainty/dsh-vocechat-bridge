@@ -14,19 +14,23 @@ npm pack
 dsh plugin --profile web add "K:\Code\Tools\dsh-plugins\dsh-vocechat-bridge"
 ```
 
-也可以把 `dsh-vocechat-bridge-0.3.0.tgz` 交给 DSH 插件安装器。安装与配置后重启对应 DSH profile。开发链接安装时，宿主依赖必须能从插件的真实路径解析；遵循宿主安装器解析 peer dependencies 的方式，若手工建立依赖链接，指向实际 profile 的 `node_modules/@deepseek-ai`，不要复制凭据文件。
+也可以把 `dsh-vocechat-bridge-0.3.1.tgz` 交给 DSH 插件安装器。链接安装更新后，在插件页关闭再打开该插件一次，并刷新界面加载新的 client；不必重启整个 DSH。开发链接安装时，宿主依赖必须能从插件的真实路径解析；遵循宿主安装器解析 peer dependencies 的方式，若手工建立依赖链接，指向实际 profile 的 `node_modules/@deepseek-ai`，不要复制凭据文件。
 
 本次交付没有执行上述安装命令，也没有变更已运行的 profile。`npm ci --legacy-peer-deps` 用于独立开发和测试；运行插件时三个 peer dependency 由 DSH 提供。
 
 ## 最小配置
 
-将 [config.example.yml](../config.example.yml) 的连接项合并到 profile 的 `cordis.patch.yml`，填写实际服务地址、机器人 UID、固定 Session ID 和白名单；这些连接项保存后重启生效。语音选项通过 DSH 侧栏 **插件 → VoceChat 语音** 设置，选择厂家、模型、Key、音色并分别启用识别/合成。语音字段使用宿主的 volatile Config 和设置持久化，保存后下一次请求生效；总开关关闭时停止语音模型调用，仍保留原音频附件。设置页的安装入口固定为 bundle 中的 `id: vocechat-bridge`。
+打开 **设置 → VoceChat**，填写实际服务地址、机器人 UID、固定 Session ID、白名单和 Webhook 参数，点击“启动桥接后端”。页面与“刷B站”一样挂在设置导航中，桥接停止时仍可使用。也可以将 [config.example.yml](../config.example.yml) 合并到 profile 作为初始配置。
 
-敏感值仅存 DSH credentials 或进程环境。配置中的 `botApiKeyRef`、`webhookSecretRef`、`asrApiKeyRef`、`ttsApiKeyRef` 填的是**引用名**。语音设置页的密码输入框通过 DSH credentials 保存实际 Key，不读取已有密钥。credentials 服务存在时优先解析；未解析到再读取同名环境变量。每次请求重新解析，可以轮换凭据。自定义 OpenAI 兼容的无鉴权本地服务允许空引用。
+页面保存的字段写入与 state.json 同目录的 `settings.json`，优先于 profile 同名值，未保存字段继续跟随 profile/defaults。语音配置保存后下一次请求生效；连接参数、白名单、Session、防抖窗口等修改后点击“保存并重载后端”。停止会持久化 `enabled:false` 并释放监听，启动/重载会持久化 `enabled:true`；下次 DSH 加载时恢复这一选择。操作期间仍沿用既有队列与去重状态，不创建替代 Session，不停止共享 Agent。
 
-Webhook 建议绑定 loopback，由反向代理转发。精确 Webhook 路径的 GET 无需鉴权，直接返回 200，供 VoceChat 验证地址；该请求不接收消息、不返回会话数据。POST 投递要求共享 secret：支持 `Authorization: Bearer <secret>`，或在 VoceChat 的 Webhook URL 配置 `https://桥接入口/vocehook?secret=<secret>`。反向代理可代为注入 Authorization，避免 URL 中保存密钥；配置代理访问日志时应隐藏 query。插件日志不记录 URL、请求体或凭据。后台验证成功只证明 GET 可达，还需发送测试消息确认 POST 的鉴权参数确实被保留。
+冷启动会先加载本地启用状态，并在凭据/webServer 服务就绪时唤醒启动检查。启动失败后按 250 ms 起步、最长 5 秒间隔继续重试；同类错误只记录一次。凭据较晚加载或旧监听短暂占用端口时，不会因首次失败而放弃自动启动。页面显示“等待自动启动”及错误原因；点击停止后保存的禁用状态会取消后续重试，卸载插件也会取消重试。
 
-VoceChat 后台的 **16 字节 secret 是可选的消息加密设置**，留空即推送明文 JSON；设置后需要接收端先 AES 解密，再做 PKCS7 去填充。当前插件接收明文，所以该字段留空。URL 中的 `?secret=...` 或 Authorization 是插件自己的 POST 访问令牌，长度不受 16 字节限制，不要把它填进 VoceChat 的 AES secret 栏。二者分开配置，并通过 HTTPS/受信任本地代理传输；接收端令牌使用独立的强随机值。
+敏感值仅存 DSH credentials 或进程环境。配置中的 `botApiKeyRef`、`webhookSecretRef`、`asrApiKeyRef`、`ttsApiKeyRef` 填的是**引用名**。设置页的密码输入框通过插件宿主接口写入 DSH credentials，不读取已有密钥，不把 Key 写入 settings.json。credentials 服务存在时优先解析；未解析到再读取同名环境变量。每次请求重新解析，可以轮换凭据。自定义 OpenAI 兼容的无鉴权本地服务允许空引用。
+
+Webhook 建议绑定 loopback，由反向代理转发。精确 Webhook 路径的 GET 无需鉴权，直接返回 200，供 VoceChat 验证地址；该请求不接收消息、不返回会话数据。**POST 默认直接接收明文 JSON，不要求 Secret**。只有在设置页开启“校验 Webhook 访问令牌”时，才按 `webhookSecretRef` 解析令牌并校验 `Authorization: Bearer <token>` 或 URL 的 `?secret=<token>`；开启后令牌缺失会明确报错，不会悄悄取消校验。反向代理可代为注入 Authorization，日志应隐藏 query。插件日志不记录 URL、请求体或凭据。
+
+VoceChat 后台的 **16 字节 Secret 是可选的消息加密设置**，留空即推送明文 JSON；设置后需要 AES 解密和 PKCS7 去填充。当前插件接收明文，所以该字段留空。插件的访问令牌也是可选项，与加密 Secret 分开；不使用令牌时 `webhookSecretRef` 留空即可启动。沿用旧配置且未设置令牌值时，在页面关闭该校验开关并重载。**Bot API Key 是调用 VoceChat API 的必填凭据，不能与这两个可选项混淆。**
 
 首次配置完成后，将 `enabled` 改为 `true`。默认端口 **8898**，与旧桥接的 **8899** 分开。空白名单拒绝全部对应渠道：私聊使用 UID；群聊使用 GID。`groupSenderWhitelist` 可进一步限制授权群中的成员，空数组代表不加这一层限制。
 
@@ -38,7 +42,7 @@ VoceChat 后台的 **16 字节 secret 是可选的消息加密设置**，留空�
 | --- | --- |
 | `enabled` | `false`，启用前校验基址、Bot UID、Session 与凭据引用 |
 | `baseUrl`, `botUid` | VoceChat 基址与机器人自身 UID；`botUid` 用于回环保护 |
-| `botApiKeyRef`, `webhookSecretRef` | 默认 `VOCECHAT_BOT_API_KEY` / `VOCECHAT_WEBHOOK_SECRET` |
+| `botApiKeyRef`, `webhookSecretRef` | Bot 默认 `VOCECHAT_BOT_API_KEY`，必填；Webhook 默认空，不校验访问令牌 |
 | `webhookHost`, `webhookPort`, `webhookPath` | `127.0.0.1`, `8898`, `/vocehook`；精确匹配路径 |
 | `userWhitelist`, `groupWhitelist`, `groupSenderWhitelist` | 数字 ID 数组；前两个默认拒绝，第三个是可选附加限制 |
 | `targetSessionId`, `agentPreset` | 固定已有会话；preset 留空时从持久会话恢复 |

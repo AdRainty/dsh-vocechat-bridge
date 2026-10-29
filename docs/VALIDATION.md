@@ -4,7 +4,7 @@
 
 ## 自动化与本机运行
 
-v0.3.0 已分别执行 `npm run build` 与 `npm test`：TypeScript 严格编译通过，**97 项自动化测试通过，0 失败，0 跳过**。本次只增加两项语音功能测试，复用原有套件。
+v0.3.1 执行 `npm run check`：TypeScript 严格编译通过，**100 项自动化测试通过，0 失败，0 跳过**。语音版本增加两项功能测试，设置页修复增加两项 API/生命周期功能测试，另为用户反馈补一项冷启动回归，其余复用原有套件。
 
 | 套件 | 数量 | 验证内容 |
 | --- | ---: | --- |
@@ -15,6 +15,7 @@ v0.3.0 已分别执行 `npm run build` 与 `npm test`：TypeScript 严格编译�
 | `live-webhook.test.ts` | 4 | 隔离接收程序的 GET/POST 行为、诊断记录脱敏、禁止真实 DSH/ASR/发送、媒体开关与音频探测、明文审计，以及终止子进程后的缓冲恢复/重复投递 |
 | `debounce.test.ts` | 14 | 固定时间验证 4s/1.5s/12s 默认值、静默重置、最长等待、独立键与交错顺序、封批上限、磁盘时间戳/附件/ASR 保留、提交前恢复、提交后隔离、v1 升级及完成后去重保留 |
 | `speech.test.ts` | 2 | MiMo 请求和真实 16 kHz 单声道 WAV 归一化、原文件不变；OpenAI/MiMo 两家 TTS 到 VoceChat 语音发送闭环、实时配置与关闭开关、暂存清理 |
+| `settings.test.ts` | 3 | 设置 API 启动/重载/停止真实本地监听、无 Secret 启动并接受明文 POST、停止后设置仍可用、配置重启保留、实例代理更新与卸载防重启；跨来源/非 JSON/过期版本/无效配置拒绝及密钥不回传；模拟冷启动时凭据迟到，验证持久 enabled 恢复、启动重试与停止后取消 |
 
 测试启动真实的本地 HTTP Mock VoceChat/ASR 服务，使用假的 DSH 会话进行闭环。没有把 Mock 的固定转写结果当成真实语音识别能力。ASR provider 确实发送 multipart 文件并解析服务响应，但本次没有启动 Whisper 模型或请求云端模型。
 
@@ -29,8 +30,10 @@ v0.3.0 已分别执行 `npm run build` 与 `npm test`：TypeScript 严格编译�
 - `createUserMessage` 与 Session event 校验接受结构化插件来源，消息被冻结。
 - 真实 `defineTool` 编译八个工具并执行参数校验，包含 `voce_speak`。
 - 真实 Schemastery 解析默认禁用配置及语音 volatile 字段。
-- 通过轻量 React hooks 驱动实际客户端模块，检查设置页注册、厂家切换、凭据写入和保存；保存值再次交给真实宿主 Schema 校验。该步骤使用假设置/凭据服务，尚未在真实浏览器中点击页面。
+- 通过轻量 React hooks 驱动实际客户端模块，在仅有 `slots`、没有 `configForms/locale/remote` 的环境检查 `settings.section` 注册、厂家切换、API 凭据写入和保存；保存值再次交给真实宿主 Schema 校验。该步骤使用假服务，尚未在真实浏览器中点击页面。
 - 加载打包入口 `dist/index.js`，在假 ctx 中执行 `apply/effect/dispose`；无监听、无用户配置写入、无模型调用、无真实消息。
+
+另外执行了真实发行库上的冷启动入口检查：在隔离临时目录预存 `enabled:true`，第一次挂载让凭据稍后就绪，确认自动恢复并能通过真实 HTTP GET；卸载后保留启用状态，再挂载第二个实例，无需调用启动按钮便建立监听。两个监听均为本机随机端口，结束后清理；凭据与 Agent 为测试替身，没有重启用户的 DSH、写用户配置或调用真实模型。
 
 可复现命令见 [DSH-API.md](DSH-API.md)，脚本为 `scripts/verify-host.cjs`。这验证入口与发行库兼容性，不代表生产服务已切换。
 
@@ -53,7 +56,7 @@ v0.3.0 已分别执行 `npm run build` 与 `npm test`：TypeScript 严格编译�
 
 已验证的真实入站链路为 VoceChat 私聊推送 → 接收/规范化/去重队列 → 附件下载与音频探测/转换。真实出站结果见下文；群聊、真实 DSH Agent 驱动的回复和真实 ASR 转写仍待对应服务联调，相关自动化 Mock 结果分别记录在上表。
 
-后续未带 URL 访问令牌的推送曾在鉴权阶段返回 401，并未进入上述处理统计。为匹配本次只接收明文的临时测试，独立程序可在其私有 JSON 配置中显式设 `requireWebhookToken:false`，进入不要求外部令牌的审计模式；它仍没有真实 DSH、ASR 或出站消息能力。此开关仅属于测试程序，**不属于正式插件 Config**，默认关闭；正式插件的 POST 鉴权保持不变。
+后续未带 URL 访问令牌的推送曾在旧版鉴权阶段返回 401，并未进入上述处理统计。独立测试程序可通过 `requireWebhookToken:false` 关闭审计端令牌要求。**v0.3.1 正式插件也支持可选令牌**：默认 `webhookSecretRef:''`，不填 Secret 即接收明文 JSON；显式配置引用时才校验，缺失凭据或错误令牌会拒绝。这个访问令牌与 VoceChat 后台可选的 AES Secret 分开。
 
 2026-10-29 北京时间 11:34:01，明文审计模式实际收到一条远端私聊 POST：未带 query 访问令牌、未带 Authorization，返回 202，规范化与处理完成。累计真实消息处理完成 7 条，队列内失败与不确定状态均为 0；早先鉴权拒绝的请求不计入此处理数量。
 

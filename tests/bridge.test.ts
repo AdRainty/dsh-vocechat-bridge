@@ -37,7 +37,7 @@ async function setup(t:any, overrides:Partial<BridgeConfig>={}, run?:SessionPort
   });
   await new Promise<void>(resolve=>api.listen(0,'127.0.0.1',resolve));
   const base=`http://127.0.0.1:${(api.address() as any).port}`;
-  const config:Partial<BridgeConfig>={enabled:true,baseUrl:base,botUid:2,targetSessionId:'session-test',userWhitelist:[10,11],groupWhitelist:[20],webhookPort:0,privateQuietMs:10,groupQuietMs:10,maxWaitMs:1000,statePath:join(dir,'state.json'),tempDir:join(dir,'tmp'),...overrides};
+  const config:Partial<BridgeConfig>={enabled:true,baseUrl:base,botUid:2,targetSessionId:'session-test',webhookSecretRef:'VOCECHAT_WEBHOOK_SECRET',userWhitelist:[10,11],groupWhitelist:[20],webhookPort:0,privateQuietMs:10,groupQuietMs:10,maxWaitMs:1000,statePath:join(dir,'state.json'),tempDir:join(dir,'tmp'),...overrides};
   const bridge=new Bridge(config,{session:{...sessionOptions,async run(m,s,o){calls.push(m);return run?run(m,s,o):{text:'reply'};}},resolveCredential:async()=> 'test-secret'});
   await bridge.start();
   t.after(async()=>{await bridge.stop();await new Promise<void>(r=>api.close(()=>r()));await rm(dir,{recursive:true,force:true});});

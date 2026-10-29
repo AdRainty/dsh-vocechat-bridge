@@ -45,7 +45,8 @@ export class Bridge {
   private speechConfig() { return parseConfig({...this.config,...this.ports.speechConfig?.()}); }
   async start() {
     if (this.running || !this.config.enabled) return;
-    if (!await this.ports.resolveCredential(this.config.webhookSecretRef) || !await this.ports.resolveCredential(this.config.botApiKeyRef)) throw new Error('BRIDGE_CREDENTIAL_MISSING');
+    if (!await this.ports.resolveCredential(this.config.botApiKeyRef)) throw new Error('BRIDGE_CREDENTIAL_MISSING');
+    if (this.config.webhookSecretRef && !await this.ports.resolveCredential(this.config.webhookSecretRef)) throw new Error('WEBHOOK_CREDENTIAL_MISSING');
     await this.store.load();
     await this.store.transaction(async()=>{
       for(const job of this.store.jobs) {
@@ -103,10 +104,12 @@ export class Bridge {
     // VoceChat validates the endpoint with GET. This probe exposes no data and
     // must succeed independently of POST credentials or query preservation.
     if(req.method==='GET') return respond(200,{ok:true});
-    const secret=await this.ports.resolveCredential(this.config.webhookSecretRef);
-    const provided=req.headers.authorization?.replace(/^Bearer /,'') || url.searchParams.get('secret') || '';
-    const a=Buffer.from(secret||''),b=Buffer.from(provided);
-    if (!a.length || a.length!==b.length || !timingSafeEqual(a,b)) return respond(401,{error:'UNAUTHORIZED'});
+    if(this.config.webhookSecretRef) {
+      const secret=await this.ports.resolveCredential(this.config.webhookSecretRef);
+      const provided=req.headers.authorization?.replace(/^Bearer /,'') || url.searchParams.get('secret') || '';
+      const a=Buffer.from(secret||''),b=Buffer.from(provided);
+      if (!a.length || a.length!==b.length || !timingSafeEqual(a,b)) return respond(401,{error:'UNAUTHORIZED'});
+    }
     if(req.method!=='POST') return respond(405,{error:'METHOD_NOT_ALLOWED'});
     if (!req.headers['content-type']?.toLowerCase().startsWith('application/json')) return respond(415,{error:'JSON_REQUIRED'});
     const chunks:Buffer[]=[];let size=0;

@@ -30,8 +30,8 @@ function media(value: any): OutgoingAttachment {
 }
 
 /** Register DSH tools using the actual host defineTool compiler (injected by entry). */
-export function registerVoceTools(ctx: { tools: { register(tool: any): any } }, bridge: Pick<Bridge, 'send' | 'status'>,
-  session: DshSessionPort, defineTool: DefineTool) {
+export function registerVoceTools(ctx: { tools: { register(tool: any): any } }, bridge: Pick<Bridge, 'send'> & {status():unknown},
+  session: Pick<DshSessionPort,'outboundMode'|'noteSent'|'quiet'>, defineTool: DefineTool) {
   const output = { schema: { type: 'string' }, render: (_args: any, value: string) => [{ type: 'text', text: value }] };
   const send = async (args: any, exec: Execution, message: OutboundMessage) => {
     const to = destination(args.destination);
