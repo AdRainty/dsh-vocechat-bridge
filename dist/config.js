@@ -11,14 +11,24 @@ export const defaults = {
     textSegmentChars: 2000, privateQuietMs: 4000, groupQuietMs: 1500, maxWaitMs: 12000,
     mergeWindowMs: 0, maxBatch: 10, dedupTtlMs: 24 * 3600_000,
     retentionMs: 24 * 3600_000, maxHistory: 5000, logLevel: 'info',
-    asrEnabled: false, asrBaseUrl: '', asrModel: 'whisper-1', asrApiKeyRef: '', asrLanguage: '',
+    voiceEnabled: true, asrEnabled: false, asrProvider: 'openai', asrBaseUrl: '', asrModel: '', asrApiKeyRef: '', asrLanguage: '',
     asrAcceptedFormats: ['wav', 'mp3', 'ogg', 'm4a', 'flac', 'webm'],
     asrTimeoutMs: 60_000, ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe',
-    ttsProvider: '', audioUnderstandingProvider: '',
+    ttsEnabled: false, ttsProvider: 'openai', ttsBaseUrl: '', ttsModel: '', ttsApiKeyRef: '',
+    ttsVoice: '', ttsInstructions: '', ttsFormat: 'wav', ttsTimeoutMs: 120_000,
+    audioUnderstandingProvider: '',
 };
+/** Only speech settings are live-editable; transport/session configuration keeps its existing lifecycle. */
+export const speechFields = ['voiceEnabled', 'asrEnabled', 'asrProvider', 'asrBaseUrl', 'asrModel', 'asrApiKeyRef', 'asrLanguage',
+    'asrAcceptedFormats', 'asrTimeoutMs', 'ttsEnabled', 'ttsProvider', 'ttsBaseUrl', 'ttsModel', 'ttsApiKeyRef', 'ttsVoice',
+    'ttsInstructions', 'ttsFormat', 'ttsTimeoutMs'];
+export function readConfig(input) {
+    return Object.fromEntries(Object.entries(input).map(([key, value]) => [key,
+        speechFields.includes(key) && typeof value?.get === 'function' ? value.get() : value]));
+}
 export function parseConfig(input = {}) {
     const c = { ...defaults, ...input };
-    for (const key of ['enabled', 'autoReply', 'allowProactive', 'asrEnabled']) {
+    for (const key of ['enabled', 'autoReply', 'allowProactive', 'voiceEnabled', 'asrEnabled', 'ttsEnabled']) {
         if (typeof c[key] !== 'boolean')
             throw new Error(`Invalid config: ${key}`);
     }
@@ -40,7 +50,7 @@ export function parseConfig(input = {}) {
         if (typeof defaults[key] === 'number' && (!Number.isSafeInteger(c[key]) || c[key] < 0))
             throw new Error(`Invalid config: ${key}`);
     }
-    for (const key of ['requestTimeoutMs', 'turnTimeoutMs', 'maxMediaBytes', 'maxAudioSeconds', 'maxBodyBytes', 'maxQueue', 'maxTextChars', 'textSegmentChars', 'maxBatch', 'maxHistory', 'dedupTtlMs', 'retentionMs', 'asrTimeoutMs', 'maxWaitMs']) {
+    for (const key of ['requestTimeoutMs', 'turnTimeoutMs', 'maxMediaBytes', 'maxAudioSeconds', 'maxBodyBytes', 'maxQueue', 'maxTextChars', 'textSegmentChars', 'maxBatch', 'maxHistory', 'dedupTtlMs', 'retentionMs', 'asrTimeoutMs', 'ttsTimeoutMs', 'maxWaitMs']) {
         if (c[key] < 1)
             throw new Error(`Invalid config: ${key}`);
     }
@@ -52,7 +62,24 @@ export function parseConfig(input = {}) {
     // this compatibility alias; new configurations use the fields above.
     if (c.mergeWindowMs)
         c.privateQuietMs = c.groupQuietMs = c.mergeWindowMs;
-    for (const key of ['baseUrl', 'asrBaseUrl']) {
+    // Empty values follow the selected vendor, rather than retaining another vendor's model/endpoint.
+    c.ttsProvider ||= 'openai'; // v0.2 used an empty reserved field.
+    if (!['openai', 'mimo'].includes(c.asrProvider) || !['openai', 'mimo'].includes(c.ttsProvider))
+        throw new Error('Unsupported speech provider');
+    c.asrModel ||= c.asrProvider === 'mimo' ? 'mimo-v2.5-asr' : 'whisper-1';
+    c.ttsModel ||= c.ttsProvider === 'mimo' ? 'mimo-v2.5-tts' : 'gpt-4o-mini-tts';
+    c.ttsVoice ||= c.ttsProvider === 'mimo' ? 'mimo_default' : 'alloy';
+    if (!['wav', 'mp3'].includes(c.ttsFormat))
+        throw new Error('Invalid config: ttsFormat');
+    if (c.voiceEnabled && c.asrEnabled && c.asrProvider === 'mimo' && !['', 'auto', 'zh', 'en'].includes(c.asrLanguage))
+        throw new Error('MiMo ASR language must be auto, zh or en');
+    if (c.voiceEnabled && c.ttsEnabled && c.ttsProvider === 'mimo') {
+        if (c.ttsModel.includes('voiceclone'))
+            throw new Error('MiMo voice cloning is not supported');
+        if (c.ttsModel.includes('voicedesign') && !c.ttsInstructions.trim())
+            throw new Error('MiMo voice design requires ttsInstructions');
+    }
+    for (const key of ['baseUrl', 'asrBaseUrl', 'ttsBaseUrl']) {
         if (!c[key])
             continue;
         const u = new URL(c[key]);
@@ -72,10 +99,8 @@ export function parseConfig(input = {}) {
     c.tempDir = resolve(c.tempDir || join(home, 'vocechat-bridge', 'tmp'));
     if (c.enabled && (!c.baseUrl || !c.targetSessionId || !c.botUid || !c.botApiKeyRef || !c.webhookSecretRef))
         throw new Error('Enabled bridge requires baseUrl, targetSessionId, botUid and credential references');
-    if (c.asrEnabled && !c.asrBaseUrl)
-        throw new Error('ASR requires asrBaseUrl');
-    if (c.ttsProvider || c.audioUnderstandingProvider)
-        throw new Error('TTS/audio understanding providers must be registered programmatically; no built-in provider selected');
+    if (c.audioUnderstandingProvider)
+        throw new Error('Audio understanding providers must be registered programmatically');
     return c;
 }
 export function allowedDestination(c, d) {

@@ -4,6 +4,8 @@
 
 升级到 v0.2.0 时，先停插件并备份本地状态；新状态格式为 v2，支持恢复静默计时和已封批队列。默认私聊 4 秒、群聊 1.5 秒、最长 12 秒封批。删除旧 `mergeWindowMs` 或设为 0 后再使用新参数；状态升级与降级注意事项见 [DEBOUNCE.md](DEBOUNCE.md)。
 
+v0.3.0 保持 v2 状态格式，新增原生语音设置页及 OpenAI/MiMo 识别合成。原有 `asrEnabled/asrBaseUrl/asrModel/asrApiKeyRef` 配置继续使用标准 OpenAI 转写协议；旧的空 `ttsProvider` 按 `openai` 兼容，合成仍需显式启用。安装后进入侧栏“插件 → VoceChat 语音”选择厂家和 Key。旧 MiMo 的 `MIMO_*` 环境配置不会自动导入：将 `asrProvider/ttsProvider` 设为 `mimo`，使用 `MIMO_API_KEY` 引用；模型、音色、描述按 [PROVIDERS.md](PROVIDERS.md) 配置。
+
 ## 切换步骤
 
 1. 备份旧桥接的启动方式、环境配置、Webhook URL 和 DSH profile 的 `cordis.patch.yml`；凭据备份放在受保护位置。记录旧监听端口、Bot UID 和目标 Session ID。不要把含密钥的配置复制进本项目。
@@ -47,7 +49,7 @@
 
 旧脚本记录的实际问题是：手机语音可能为 M4A，而当时接入的 ASR 只接受 WAV/MP3。`mimoAsr` 对非 `.wav`/`.mp3` 文件先执行 FFmpeg，转换为 **16 kHz、单声道 WAV**，再按旧服务要求编码请求；已有 WAV/MP3 则直接上传。只改文件扩展名或 MIME 不会完成音频转换。
 
-新插件默认接受 WAV、MP3、OGG、M4A、FLAC、WebM 并直接上传，不能据此推断实际 ASR 服务支持全部格式。对仅接受 WAV 的服务可设置：
+新插件的标准 OpenAI Provider 默认接受 WAV、MP3、OGG、M4A、FLAC、WebM 并直接上传，不能据此推断实际 ASR 服务支持全部格式。对仅接受 WAV 的服务可设置：
 
 ```yaml
 asrAcceptedFormats: ['wav']
@@ -55,9 +57,9 @@ ffmpegPath: ffmpeg
 ffprobePath: ffprobe
 ```
 
-此配置会把 **M4A 等非 WAV 容器**转换为 16 kHz、单声道、PCM WAV；**已有 WAV 不会重新采样或混为单声道**。当前没有“对所有输入强制 16 kHz 单声道”的配置项。若所选服务连 WAV 的采样率、声道或内部编码也有要求，需要在上游归一化音频或扩展 Provider 后再接入；用实际样本检查 FFprobe 结果，不能仅检查 `.wav` 后缀。依赖、大小、时长及格式错误应明确处理，失败时不生成转写。
+标准 OpenAI Provider 下，此配置会把 **M4A 等非 WAV 容器**转换为 16 kHz、单声道、PCM WAV；**已有 WAV 不会重新采样或混为单声道**。v0.3.0 的 **MiMo Provider 则对全部输入强制归一化为 16 kHz 单声道 PCM WAV**，保留原文件供 DSH 附件使用。用实际样本检查 FFprobe 结果，不能仅检查 `.wav` 后缀。依赖、大小、时长及格式错误应明确处理，失败时不生成转写。
 
-另外，旧 `mimoAsr` 使用 `/chat/completions` 的 JSON `input_audio` / Base64 协议；新插件内置 Provider 使用 `/audio/transcriptions` 的 multipart 协议。旧 ASR 地址、模型名和凭据引用不能机械复制后视为兼容，必须核实服务支持的请求协议。配置和扩展方法见 [PROVIDERS.md](PROVIDERS.md)。
+另外，旧 `mimoAsr` 使用 `/chat/completions` 的 JSON `input_audio` / Base64 协议；v0.3.0 已由 MiMo Provider 封装，标准 OpenAI Provider 继续使用 `/audio/transcriptions` 的 multipart 协议。迁移时必须选择正确厂家，不能只替换模型名。配置和扩展方法见 [PROVIDERS.md](PROVIDERS.md)。
 
 迁移验证：至少使用一条手机 M4A 和一条已有 WAV，分别确认实际上传格式、采样率、声道和识别结果，并测试格式拒绝或转写失败的处理。先在测试服务完成这些检查，再替换正式语音链路。
 

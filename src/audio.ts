@@ -35,9 +35,11 @@ export interface AudioUnderstandingResult {
 export interface AudioUnderstandingProvider {
   understand(file: AudioFile, signal?: AbortSignal): Promise<AudioUnderstandingResult>;
 }
-/** Extension interface only. The bridge never enables speech synthesis implicitly. */
+export interface SynthesizedAudio { bytes: Uint8Array; name: string; mime: string; durationSeconds: number }
+export interface SynthesisOptions { voice?: string; instructions?: string; signal?: AbortSignal }
+/** All vendors return the same validated audio shape; callers own delivery. */
 export interface TtsProvider {
-  synthesize(text: string, options?: { voice?: string; language?: string; signal?: AbortSignal }): Promise<AudioFile>;
+  synthesize(text: string, options?: SynthesisOptions): Promise<SynthesizedAudio>;
 }
 
 export class AudioError extends Error {
@@ -175,6 +177,29 @@ export async function probeAudio(file: AudioFile | string, input: AudioLimits = 
   const durationSeconds = (format === 'wav' ? wavDuration(bytes) : undefined) ?? await durationWithProbe(filename, options, signal);
   if (durationSeconds > options.maxDurationSeconds) throw new AudioError('AUDIO_TOO_LONG', `Audio exceeds ${options.maxDurationSeconds} seconds`);
   return { format, mime: mimeTypes[format], durationSeconds, sizeBytes: bytes.length };
+}
+
+/** MiMo accepts WAV/MP3; normalize every source to 16 kHz mono PCM without changing the original. */
+export async function normalizeSpeechAudio(file: AudioFile, input: AudioLimits, signal?: AbortSignal) {
+  const options = limits(input);
+  const original = await probeAudio(file, options, signal);
+  await fs.mkdir(options.tempDir || os.tmpdir(), { recursive: true });
+  const dir = await fs.mkdtemp(path.join(options.tempDir || os.tmpdir(), 'voce-pcm-'));
+  const output = path.join(dir, 'audio.wav');
+  const cleanup = () => fs.rm(dir, { recursive: true, force: true });
+  try {
+    await run(options.ffmpegPath || 'ffmpeg', ['-nostdin','-v','error','-protocol_whitelist','file,pipe',
+      '-i',path.resolve(file.path),'-map','0:a:0','-vn','-ac','1','-ar','16000','-c:a','pcm_s16le',
+      '-fs',String(options.maxBytes + 65536),'-y',output], options.timeoutMs, signal);
+    await probeAudio(output, options, signal);
+    return { file: { path: output, name: 'audio.wav', mime: 'audio/wav' }, original, cleanup };
+  } catch (error) {
+    await cleanup();
+    if (signal?.aborted) throw error;
+    if (error instanceof AudioError) throw error;
+    throw new AudioError((error as NodeJS.ErrnoException).code === 'ENOENT' ? 'AUDIO_CONVERT_REQUIRED' : 'AUDIO_CONVERT_FAILED',
+      'FFmpeg is required to normalize speech to 16 kHz mono PCM WAV');
+  }
 }
 
 export interface OpenAICompatibleAsrOptions extends AudioLimits {

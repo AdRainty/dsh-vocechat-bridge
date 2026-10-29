@@ -7,7 +7,8 @@ import { normalizeWebhook } from "./inbound.js";
 import { StateStore, batchPhases } from "./state.js";
 import { DebounceBuffer } from "./debounce.js";
 import { VoceChatClient } from "./vocechat.js";
-import { AudioError, OpenAICompatibleAsr, probeAudio } from "./audio.js";
+import { AudioError, probeAudio } from "./audio.js";
+import { createAsrProvider, createTtsProvider, speechOptions } from "./speech.js";
 const silent = { debug() { }, info() { }, warn() { }, error() { } };
 export class Bridge {
     config;
@@ -42,6 +43,7 @@ export class Bridge {
             allowedLocalRoots: this.config.allowedLocalRoots, allowedRemoteOrigins: this.config.allowedRemoteOrigins,
         });
     }
+    speechConfig() { return parseConfig({ ...this.config, ...this.ports.speechConfig?.() }); }
     async start() {
         if (this.running || !this.config.enabled)
             return;
@@ -104,7 +106,10 @@ export class Bridge {
         await this.store.transaction(async () => { });
     }
     status() {
+        const voice = this.speechConfig();
         return { enabled: this.config.enabled, running: this.running, address: this.server?.address(), failure: this.failure,
+            speech: { enabled: voice.voiceEnabled, asrEnabled: voice.asrEnabled, asrProvider: voice.asrProvider, asrModel: voice.asrModel,
+                ttsEnabled: voice.ttsEnabled, ttsProvider: voice.ttsProvider, ttsModel: voice.ttsModel },
             sessionId: this.config.targetSessionId, counts: Object.fromEntries(['pending', 'processing', 'done', 'failed', 'uncertain'].map(s => [s, this.store.jobs.filter(j => j.status === s).length])),
             batchCounts: Object.fromEntries(batchPhases.map(p => [p, this.store.batches.filter(b => b.phase === p).length])),
             blockedBatches: this.store.batches.filter(b => ['buffering', 'ready'].includes(b.phase) && !this.canDispatch(b)).length,
@@ -318,17 +323,13 @@ export class Bridge {
             attachments.push(a);
             if (a.kind === 'audio') {
                 await probeAudio({ path: localPath, name: a.name, mime: a.mime }, { maxBytes: this.config.maxMediaBytes, maxDurationSeconds: this.config.maxAudioSeconds, timeoutMs: this.config.requestTimeoutMs, ffmpegPath: this.config.ffmpegPath, ffprobePath: this.config.ffprobePath, tempDir: dir }, signal);
-                const cached = job.preparedAudio?.[index];
+                const cached = job.preparedAudio?.[index], config = this.speechConfig();
                 if (cached)
                     Object.assign(a, cached);
-                else if (this.config.asrEnabled) {
-                    const provider = new OpenAICompatibleAsr({ baseUrl: this.config.asrBaseUrl, model: this.config.asrModel,
-                        acceptedFormats: this.config.asrAcceptedFormats,
-                        resolveApiKey: () => this.ports.resolveCredential(this.config.asrApiKeyRef), language: this.config.asrLanguage || undefined,
-                        timeoutMs: this.config.asrTimeoutMs, maxBytes: this.config.maxMediaBytes, maxDurationSeconds: this.config.maxAudioSeconds,
-                        ffmpegPath: this.config.ffmpegPath, ffprobePath: this.config.ffprobePath, tempDir: dir });
+                else if (config.voiceEnabled && config.asrEnabled) {
                     let result;
                     try {
+                        const provider = createAsrProvider({ ...speechOptions(config, this.ports.resolveCredential, 'asr'), tempDir: dir });
                         const transcript = await provider.transcribe({ path: localPath, name: a.name, mime: a.mime }, signal);
                         result = { transcript: transcript.text };
                     }
@@ -354,7 +355,7 @@ export class Bridge {
                 throw new Error('DESTINATION_DENIED');
             if (options.proactive && !this.config.allowProactive)
                 throw new Error('PROACTIVE_DISABLED');
-            if (!message.text?.trim() && !message.attachments?.length)
+            if (!message.text?.trim() && !message.attachments?.length && !message.speech?.text?.trim())
                 throw new Error('EMPTY_MESSAGE');
             if (message.attachments && message.attachments.length > 20)
                 throw new Error('TOO_MANY_ATTACHMENTS');
@@ -364,13 +365,33 @@ export class Bridge {
                 throw new Error('INVALID_REPLY_ID');
             const receipts = [];
             try {
+                let speech;
+                if (message.speech) {
+                    const config = this.speechConfig();
+                    if (!config.voiceEnabled || !config.ttsEnabled)
+                        throw new Error('TTS_DISABLED');
+                    if (typeof message.speech.text !== 'string' || !message.speech.text.trim() || Array.from(message.speech.text).length > this.config.maxTextChars)
+                        throw new Error('INVALID_SPEECH_TEXT');
+                    const dir = join(this.config.tempDir, `job-${randomUUID()}`);
+                    this.activeTempDirs.add(dir);
+                    try {
+                        speech = await createTtsProvider({ ...speechOptions(config, this.ports.resolveCredential, 'tts'), tempDir: dir })
+                            .synthesize(message.speech.text, { voice: message.speech.voice, instructions: message.speech.instructions, signal });
+                    }
+                    finally {
+                        await rm(dir, { recursive: true, force: true });
+                        this.activeTempDirs.delete(dir);
+                    }
+                }
                 const text = Array.from(message.text || '');
-                if (!text.length && replyTo !== undefined)
+                if (!text.length && !speech && replyTo !== undefined)
                     receipts.push(await this.client.sendText(destination, '附件', { replyTo, signal }));
                 for (let i = 0; i < text.length; i += this.config.textSegmentChars) {
                     signal.throwIfAborted();
                     receipts.push(await this.client.sendText(destination, text.slice(i, i + this.config.textSegmentChars).join(''), { replyTo: i === 0 ? replyTo : undefined, format: message.format, signal }));
                 }
+                if (speech)
+                    receipts.push(await this.client.sendAudioBytes(destination, speech.bytes, { name: speech.name, mime: speech.mime }, { replyTo: text.length ? undefined : replyTo, signal }));
                 for (const a of message.attachments || []) {
                     signal.throwIfAborted();
                     receipts.push(await this.client.sendAttachment(destination, a, { replyTo: text.length ? undefined : replyTo, signal,

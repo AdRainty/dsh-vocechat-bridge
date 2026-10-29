@@ -230,7 +230,9 @@ test('native images/files survive bridge temp cleanup; ASR text is not invented'
     await f.session.run([message], signal());
     const blocks = f.queued[0].content;
     assert.deepEqual(blocks.map((b: any) => b.type), ['text', 'image', 'text', 'file', 'file']);
-    assert.equal(blocks[2].text, 'actual transcription');
+    assert.match(blocks[2].text, /消息 42，原文件 a\.wav/);
+    assert.match(blocks[2].text, /actual transcription$/);
+    assert.equal(Buffer.from(f.files[0].data).toString(), 'WAV');
     assert.equal(f.images.length, 1); assert.equal(f.files.length, 2);
     assert.equal(f.queued[0].source.messages[0].attachments[1].transcript, 'actual transcription');
     message.attachments[1].transcript = undefined; message.attachments[1].error = 'ASR_TIMEOUT';
@@ -257,7 +259,7 @@ test('tool send requires explicit destination and active host execution identity
   const f = fixture(); const sends: any[] = [];
   const bridge: any = { async send(...args: any[]) { sends.push(args); return [123]; }, status: () => ({ running: true }) };
   registerVoceTools(f.ctx, bridge, f.session, value => value);
-  assert.equal(f.tools.size, 7);
+  assert.equal(f.tools.size, 8);
   const tool = f.tools.get('voce_send_text');
   await assert.rejects(tool.execute({ text: 'hello' }, { agent: f.agent }), /INVALID_DESTINATION/);
   await assert.rejects(tool.execute({ destination: { kind: 'user', id: 7 }, text: 'hello' }, {}), /TOOL_SESSION_DENIED/);

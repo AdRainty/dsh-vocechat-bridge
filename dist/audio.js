@@ -156,6 +156,30 @@ export async function probeAudio(file, input = {}, signal) {
         throw new AudioError('AUDIO_TOO_LONG', `Audio exceeds ${options.maxDurationSeconds} seconds`);
     return { format, mime: mimeTypes[format], durationSeconds, sizeBytes: bytes.length };
 }
+/** MiMo accepts WAV/MP3; normalize every source to 16 kHz mono PCM without changing the original. */
+export async function normalizeSpeechAudio(file, input, signal) {
+    const options = limits(input);
+    const original = await probeAudio(file, options, signal);
+    await fs.mkdir(options.tempDir || os.tmpdir(), { recursive: true });
+    const dir = await fs.mkdtemp(path.join(options.tempDir || os.tmpdir(), 'voce-pcm-'));
+    const output = path.join(dir, 'audio.wav');
+    const cleanup = () => fs.rm(dir, { recursive: true, force: true });
+    try {
+        await run(options.ffmpegPath || 'ffmpeg', ['-nostdin', '-v', 'error', '-protocol_whitelist', 'file,pipe',
+            '-i', path.resolve(file.path), '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le',
+            '-fs', String(options.maxBytes + 65536), '-y', output], options.timeoutMs, signal);
+        await probeAudio(output, options, signal);
+        return { file: { path: output, name: 'audio.wav', mime: 'audio/wav' }, original, cleanup };
+    }
+    catch (error) {
+        await cleanup();
+        if (signal?.aborted)
+            throw error;
+        if (error instanceof AudioError)
+            throw error;
+        throw new AudioError(error.code === 'ENOENT' ? 'AUDIO_CONVERT_REQUIRED' : 'AUDIO_CONVERT_FAILED', 'FFmpeg is required to normalize speech to 16 kHz mono PCM WAV');
+    }
+}
 async function readResponse(response, maxBytes) {
     if (!response.body)
         throw new AudioError('ASR_INVALID_RESPONSE', 'ASR returned an empty response');

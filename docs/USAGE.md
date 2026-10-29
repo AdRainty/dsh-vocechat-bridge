@@ -14,15 +14,15 @@ npm pack
 dsh plugin --profile web add "K:\Code\Tools\dsh-plugins\dsh-vocechat-bridge"
 ```
 
-也可以把 `dsh-vocechat-bridge-0.2.0.tgz` 交给 DSH 插件安装器。安装与配置后重启对应 DSH profile。开发链接安装时，宿主依赖必须能从插件的真实路径解析；遵循宿主安装器解析 peer dependencies 的方式，若手工建立依赖链接，指向实际 profile 的 `node_modules/@deepseek-ai`，不要复制凭据文件。
+也可以把 `dsh-vocechat-bridge-0.3.0.tgz` 交给 DSH 插件安装器。安装与配置后重启对应 DSH profile。开发链接安装时，宿主依赖必须能从插件的真实路径解析；遵循宿主安装器解析 peer dependencies 的方式，若手工建立依赖链接，指向实际 profile 的 `node_modules/@deepseek-ai`，不要复制凭据文件。
 
 本次交付没有执行上述安装命令，也没有变更已运行的 profile。`npm ci --legacy-peer-deps` 用于独立开发和测试；运行插件时三个 peer dependency 由 DSH 提供。
 
 ## 最小配置
 
-将 [config.example.yml](../config.example.yml) 的对应项合并到 profile 的 `cordis.patch.yml`，或通过宿主按 Config schema 提供的配置入口填写。需要替换实际服务地址、机器人 UID、固定 Session ID 和白名单。原子覆盖整个 config 的宿主版本，需要重述想保留的配置键。保存后重启生效。
+将 [config.example.yml](../config.example.yml) 的连接项合并到 profile 的 `cordis.patch.yml`，填写实际服务地址、机器人 UID、固定 Session ID 和白名单；这些连接项保存后重启生效。语音选项通过 DSH 侧栏 **插件 → VoceChat 语音** 设置，选择厂家、模型、Key、音色并分别启用识别/合成。语音字段使用宿主的 volatile Config 和设置持久化，保存后下一次请求生效；总开关关闭时停止语音模型调用，仍保留原音频附件。设置页的安装入口固定为 bundle 中的 `id: vocechat-bridge`。
 
-敏感值仅存 DSH credentials 或进程环境。`botApiKeyRef`、`webhookSecretRef`、`asrApiKeyRef` 填的是**引用名**，不填实际 Key。credentials 服务存在时优先解析；未解析到再读取同名环境变量。每次请求重新解析，可以轮换凭据。ASR 自托管无鉴权服务允许空引用。
+敏感值仅存 DSH credentials 或进程环境。配置中的 `botApiKeyRef`、`webhookSecretRef`、`asrApiKeyRef`、`ttsApiKeyRef` 填的是**引用名**。语音设置页的密码输入框通过 DSH credentials 保存实际 Key，不读取已有密钥。credentials 服务存在时优先解析；未解析到再读取同名环境变量。每次请求重新解析，可以轮换凭据。自定义 OpenAI 兼容的无鉴权本地服务允许空引用。
 
 Webhook 建议绑定 loopback，由反向代理转发。精确 Webhook 路径的 GET 无需鉴权，直接返回 200，供 VoceChat 验证地址；该请求不接收消息、不返回会话数据。POST 投递要求共享 secret：支持 `Authorization: Bearer <secret>`，或在 VoceChat 的 Webhook URL 配置 `https://桥接入口/vocehook?secret=<secret>`。反向代理可代为注入 Authorization，避免 URL 中保存密钥；配置代理访问日志时应隐藏 query。插件日志不记录 URL、请求体或凭据。后台验证成功只证明 GET 可达，还需发送测试消息确认 POST 的鉴权参数确实被保留。
 
@@ -55,12 +55,17 @@ VoceChat 后台的 **16 字节 secret 是可选的消息加密设置**，留空�
 | `statePath`, `tempDir` | 默认 `$DSH_HOME/vocechat-bridge/state.json` 与 `tmp`；没有 DSH_HOME 则用用户 `.dsh` |
 | `dedupTtlMs`, `retentionMs` | 均 `86400000`；消息记录保留两者较大值，历史条数仍有上限；媒体任务结束即清临时文件 |
 | `logLevel` | `info`，可选 `debug/info/warn/error`，只输出操作与安全错误码 |
-| `asrEnabled` | `false`，收到语音仍下载并检测；启用后才调用识别服务 |
-| `asrBaseUrl`, `asrModel` | API base 默认为空，模型默认 `whisper-1`；兼容服务可指定自己的模型名 |
+| `voiceEnabled` | `true`，语音模型调用总开关；ASR/TTS 默认仍关闭 |
+| `asrEnabled`, `asrProvider` | `false`, `openai`；厂家可选 `openai` / `mimo` |
+| `asrBaseUrl`, `asrModel` | 留空跟随厂家；标准 OpenAI 默认 `whisper-1`，MiMo 默认 `mimo-v2.5-asr` |
 | `asrApiKeyRef`, `asrLanguage`, `asrTimeoutMs` | 空、空、`60000`；语言示例 `zh` |
 | `asrAcceptedFormats` | `wav/mp3/ogg/m4a/flac/webm`；设为 `[wav]` 可强制其他格式先转换 |
 | `ffmpegPath`, `ffprobePath` | `ffmpeg`, `ffprobe`；可给可执行文件绝对路径 |
-| `ttsProvider`, `audioUnderstandingProvider` | 保留空字符串；非空会明确拒绝未注册的配置，扩展见 PROVIDERS |
+| `ttsEnabled`, `ttsProvider` | `false`, `openai`；启用后 Agent 可按需调用合成工具 |
+| `ttsBaseUrl`, `ttsModel`, `ttsVoice` | 留空跟随厂家；OpenAI 默认 `gpt-4o-mini-tts` / `alloy`，MiMo 默认 `mimo-v2.5-tts` / `mimo_default` |
+| `ttsApiKeyRef`, `ttsInstructions` | Key 引用与声线/语气描述；MiMo voicedesign 模型需要描述且不传 voice |
+| `ttsFormat`, `ttsTimeoutMs` | `wav`, `120000`；格式可选 `wav` / `mp3` |
+| `audioUnderstandingProvider` | 独立扩展保留，当前留空 |
 
 ## 消息工具
 
@@ -71,8 +76,9 @@ VoceChat 后台的 **16 字节 secret 是可选的消息加密设置**，留空�
 | `voce_send_text` | `destination`, `text`, 可选 `format: 'plain'|'markdown'`、`replyTo` |
 | `voce_send_image` | `destination`, `path` 或 `url` 二选一，可选 `name/mime/replyTo` |
 | `voce_send_audio` | 同上；发送已有音频，不自动生成 TTS |
+| `voce_speak` | `destination`, `text`, 可选 `voice/instructions/replyTo`；生成并发送语音，要求启用 TTS |
 | `voce_send_file` | 同上，普通文件 |
-| `voce_send_message` | `destination`, 可选 `text`, `format`, `attachments`, `replyTo`；每项附件包含 `kind`、`path` 或 `url` |
+| `voce_send_message` | `destination`, 可选 `text`, `format`, `speech`, `attachments`, `replyTo`；speech 包含 text，可选 voice/instructions |
 | `voce_quiet` | 无参数，在当前 VoceChat 轮安静结束 |
 | `voce_bridge_status` | 无参数，只返回生命周期、Session ID、队列数量和服务地址，不含凭据与消息正文 |
 
@@ -92,7 +98,7 @@ VoceChat 后台的 **16 字节 secret 是可选的消息加密设置**，留空�
 
 文字默认 `format: 'plain'`；发送原生 Markdown 时显式设置 `format: 'markdown'`，插件使用 `text/markdown`，无需添加引用消息。自动文本回复仍默认普通文本。长文本按 `textSegmentChars` 分段，复杂 Markdown 的代码块或表格宜由调用方按逻辑段发送，避免语法跨越多个消息气泡。
 
-文字先发，附件按数组顺序逐一上传发送；一次最多 20 个附件。平台不能在单个气泡中混放这些内容，所以会拆成多条相邻消息。成功工具发送抑制本轮重复自动回复。部分成功时错误带 `sent:true` 和已经确认的 `receipts`，不会自动重发已有片段。
+包含 `speech` 时先完成合成及音频校验，再依次发送文字、合成语音、数组中的附件；附件最多 20 项。平台不能在单个气泡中混放这些内容，所以会拆成多条相邻消息。成功工具发送抑制本轮重复自动回复。部分成功时错误带 `sent:true` 和已经确认的 `receipts`，不会自动重发已有片段。合成音频直接从受限的 Provider 字节发送，不需要开放临时目录给 `allowedLocalRoots`。
 
 `replyTo` 使用 Bot API 可实现的可见 Markdown 消息 ID 引用，不是原生引用气泡。仅附件回复时先发引用文字，再发附件。音频优先 `vocechat/audio`，明确 HTTP 415 时以普通音频文件降级，并返回 `audioFallback:true`。
 

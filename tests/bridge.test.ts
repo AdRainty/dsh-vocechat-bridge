@@ -47,7 +47,7 @@ async function setup(t:any, overrides:Partial<BridgeConfig>={}, run?:SessionPort
 
 test('configuration fails closed and rejects malformed values',()=>{
   const c=parseConfig();assert.equal(c.enabled,false);assert.equal(allowedDestination(c,{kind:'user',id:1}),false);
-  for(const bad of [{enabled:true},{maxAudioSeconds:0},{maxQueue:-1},{webhookPath:'/'},{userWhitelist:['10']},{baseUrl:'https://key:secret@example.com'},{allowedRemoteOrigins:['https://example.com/path']},{asrEnabled:true},{asrAcceptedFormats:[]},{asrAcceptedFormats:['exe']},{logLevel:'verbose'}])assert.throws(()=>parseConfig(bad as any));
+  for(const bad of [{enabled:true},{maxAudioSeconds:0},{maxQueue:-1},{webhookPath:'/'},{userWhitelist:['10']},{baseUrl:'https://key:secret@example.com'},{allowedRemoteOrigins:['https://example.com/path']},{asrProvider:'unknown'},{asrAcceptedFormats:[]},{asrAcceptedFormats:['exe']},{logLevel:'verbose'}])assert.throws(()=>parseConfig(bad as any));
 });
 test('normalize official direct/group payload, media and invalid event',()=>{
   assert.deepEqual(normalizeWebhook(event(1))?.destination,{kind:'user',id:10});

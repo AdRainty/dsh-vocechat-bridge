@@ -4,7 +4,7 @@
 
 ## 自动化与本机运行
 
-`npm run check`：TypeScript 严格编译通过，**95 项自动化测试通过，0 失败，0 跳过**。
+v0.3.0 已分别执行 `npm run build` 与 `npm test`：TypeScript 严格编译通过，**97 项自动化测试通过，0 失败，0 跳过**。本次只增加两项语音功能测试，复用原有套件。
 
 | 套件 | 数量 | 验证内容 |
 | --- | ---: | --- |
@@ -14,6 +14,7 @@
 | `vocechat.test.ts` | 12 | 官方端点、原生 Markdown 及格式校验、Base64 X-Properties、实际 multipart 字节、音频 415 降级、资源路径、本地 realpath 白名单、格式/大小/上传异常、公网地址与 origin 拒绝、禁止重定向、响应流超时 |
 | `live-webhook.test.ts` | 4 | 隔离接收程序的 GET/POST 行为、诊断记录脱敏、禁止真实 DSH/ASR/发送、媒体开关与音频探测、明文审计，以及终止子进程后的缓冲恢复/重复投递 |
 | `debounce.test.ts` | 14 | 固定时间验证 4s/1.5s/12s 默认值、静默重置、最长等待、独立键与交错顺序、封批上限、磁盘时间戳/附件/ASR 保留、提交前恢复、提交后隔离、v1 升级及完成后去重保留 |
+| `speech.test.ts` | 2 | MiMo 请求和真实 16 kHz 单声道 WAV 归一化、原文件不变；OpenAI/MiMo 两家 TTS 到 VoceChat 语音发送闭环、实时配置与关闭开关、暂存清理 |
 
 测试启动真实的本地 HTTP Mock VoceChat/ASR 服务，使用假的 DSH 会话进行闭环。没有把 Mock 的固定转写结果当成真实语音识别能力。ASR provider 确实发送 multipart 文件并解析服务响应，但本次没有启动 Whisper 模型或请求云端模型。
 
@@ -26,8 +27,9 @@
 使用本机 DSH `app.asar` 内的真实库验证：
 
 - `createUserMessage` 与 Session event 校验接受结构化插件来源，消息被冻结。
-- 真实 `defineTool` 编译七个工具并执行参数校验。
-- 真实 Schemastery 解析默认禁用配置。
+- 真实 `defineTool` 编译八个工具并执行参数校验，包含 `voce_speak`。
+- 真实 Schemastery 解析默认禁用配置及语音 volatile 字段。
+- 通过轻量 React hooks 驱动实际客户端模块，检查设置页注册、厂家切换、凭据写入和保存；保存值再次交给真实宿主 Schema 校验。该步骤使用假设置/凭据服务，尚未在真实浏览器中点击页面。
 - 加载打包入口 `dist/index.js`，在假 ctx 中执行 `apply/effect/dispose`；无监听、无用户配置写入、无模型调用、无真实消息。
 
 可复现命令见 [DSH-API.md](DSH-API.md)，脚本为 `scripts/verify-host.cjs`。这验证入口与发行库兼容性，不代表生产服务已切换。
@@ -73,7 +75,7 @@
 1. Bot API 的 `replyTo` 为可见 Markdown 消息 ID 引用，不是原生引用气泡；媒体组合拆为有序多条。`vocechat/audio` 的兼容差异及 HTTP 415 降级见 API 调查记录。
 2. 当前只接收明文 JSON Webhook；VoceChat 可选 AES 密文不受支持，也没有原生 HMAC 签名协议可供验证。共享 secret 与反向代理承担入口认证。
 3. 只接收官方 Webhook 投递的消息。不补轮询其他机器人消息，不实现表情包管理、人格、记忆或自主定时调度。
-4. 图片理解依赖目标模型的图片输入能力；DSH 本版本没有原生 audio block，采用转写文本加原音频文件。TTS、阿里百炼专用协议和 Qwen Omni 仅预留 Provider 扩展点，当前内置运行的 ASR 协议为兼容 `/audio/transcriptions` 的服务。
+4. 图片理解依赖目标模型的图片输入能力；DSH 本版本没有原生 audio block，采用标注消息 ID/文件名的转写文本加原音频文件。已内置 OpenAI 标准及 MiMo ASR/TTS；阿里百炼专用协议和 Qwen Omni 仍为扩展点。新增语音验证使用本地 HTTP 测试服务，未调用真实云端 ASR/TTS。
 5. Webhook ACK 与发送 API 之间没有分布式事务。网络断开可能出现服务端已发送而客户端未确认；已入队/已启动 turn 的不确定结果不自动重试。断电级别持久化和严格 exactly-once 不在本版保证范围内。
 6. 去重使用全局 VoceChat mid，受 `dedupTtlMs` 与 `maxHistory` 限制；不要让多个 Bot/多个进程共用同一个 statePath。群白名单授权整个群，需更细限制时配置 groupSenderWhitelist。
 7. 固定 Session 的 Web/QQ 队列若持续繁忙，已封批消息继续排队，不抢占，也不消耗本轮 turnTimeoutMs。实际提交后的超时或崩溃仍会隔离为 uncertain；其他渠道主动 steer 造成同轮来源混合时停止外发。

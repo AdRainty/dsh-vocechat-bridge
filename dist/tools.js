@@ -8,6 +8,11 @@ const mediaProperties = {
     url: { type: 'string', description: 'Remote file from configured allowedRemoteOrigins.' },
     name: { type: 'string' }, mime: { type: 'string' },
 };
+const speechProperties = {
+    text: { type: 'string', required: true, description: 'Exact text to synthesize.' },
+    voice: { type: 'string', description: 'Optional vendor voice ID; defaults to settings.' },
+    instructions: { type: 'string', description: 'Optional voice/style instructions; defaults to settings.' },
+};
 function destination(value) {
     if (!value || !['user', 'group'].includes(value.kind) || !Number.isSafeInteger(value.id) || value.id <= 0)
         throw new Error('INVALID_DESTINATION');
@@ -47,10 +52,14 @@ export function registerVoceTools(ctx, bridge, session, defineTool) {
             destination: destinationSpec, path: { type: 'string' }, url: { type: 'string' }, name: { type: 'string' }, mime: { type: 'string' }, replyTo: { type: 'integer' },
         }, (args, exec) => send(args, exec, { attachments: [media({ ...args, kind })], replyTo: args.replyTo }));
     }
-    register('voce_send_message', 'Send a combined VoceChat reply: optional text and ordered image/audio/file attachments. The bridge uploads and sends each part in order. Explicit destination and media allowlists are required.', {
+    register('voce_speak', 'Synthesize text with the configured speech vendor and send a VoceChat voice message. Requires speech synthesis enabled in settings. A successful reply suppresses duplicate automatic text.', {
+        destination: destinationSpec, ...speechProperties, replyTo: { type: 'integer' },
+    }, (args, exec) => send(args, exec, { speech: { text: args.text, voice: args.voice, instructions: args.instructions }, replyTo: args.replyTo }));
+    register('voce_send_message', 'Send a combined VoceChat reply: optional text, synthesized speech and ordered image/audio/file attachments. Explicit destination is required. Speech uses settings; local/remote attachments use media allowlists.', {
         destination: destinationSpec, text: { type: 'string' }, format: { type: 'string', enum: ['plain', 'markdown'], description: 'Text format; defaults to plain.' }, replyTo: { type: 'integer' },
         attachments: { type: 'array', items: { type: 'object', additionalProperties: false, properties: mediaProperties } },
-    }, (args, exec) => send(args, exec, { text: args.text, format: args.format, attachments: args.attachments?.map(media), replyTo: args.replyTo }));
+        speech: { type: 'object', additionalProperties: false, properties: speechProperties },
+    }, (args, exec) => send(args, exec, { text: args.text, format: args.format, attachments: args.attachments?.map(media), speech: args.speech, replyTo: args.replyTo }));
     register('voce_quiet', 'End the current VoceChat turn without an automatic text reply. Use when no response is needed. No text marker is necessary.', {}, (_args, exec) => {
         session.quiet(exec?.agent);
         exec.concludeTurn?.();

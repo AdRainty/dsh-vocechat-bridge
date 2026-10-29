@@ -1,12 +1,12 @@
 # dsh-vocechat-bridge
 
-已实现 **v0.2.0**：面向 **DSH 0.2.1-rc.3 / Node.js 22.19+** 的原生 TypeScript 插件。支持固定会话双向文字/图片/文件/已有音频、兼容服务 ASR、组合发送、来源隔离和持久化队列。新增按来源/会话/发送者隔离的静默防抖：默认私聊 4 秒、群聊 1.5 秒、最长 12 秒封批；支持忙碌排队与缓冲恢复。默认禁用，安装不会接管旧桥接。
+已实现 **v0.3.0**：面向 **DSH 0.2.1-rc.3 / Node.js 22.19+** 的原生 TypeScript 插件。支持固定会话双向文字/图片/文件/音频、组合发送、来源隔离和持久化队列。提供原生“VoceChat 语音”设置页，支持标准 OpenAI 与小米 MiMo 的识别、合成及厂家适配；语音输入同时保留原文件和转写文字。私聊默认静默 4 秒、群聊 1.5 秒、最长 12 秒封批，支持忙碌排队与缓冲恢复。桥接及 ASR/TTS 默认禁用，安装不会接管旧桥接。
 
 - [安装、配置、工具与运行说明](docs/USAGE.md)
 - [旧桥接迁移与回滚](docs/MIGRATION.md)
 - [验证结果和已知限制](docs/VALIDATION.md)
 - [DSH 接口核实](docs/DSH-API.md) · [VoceChat API 核实](docs/VOCECHAT-API.md)
-- [ASR 配置和 Provider 扩展](docs/PROVIDERS.md)
+- [语音设置页、OpenAI / MiMo 与 Provider 扩展](docs/PROVIDERS.md)
 - [防抖合并、持久化与恢复语义](docs/DEBOUNCE.md)
 - [完整配置示例](config.example.yml)
 
@@ -17,7 +17,7 @@ npm pack
 dsh plugin --profile web add "K:\Code\Tools\dsh-plugins\dsh-vocechat-bridge"
 ```
 
-先按配置文档填写凭据引用、白名单与 Session，再显式启用。已完成 Mock 自动化、真实 DSH 发行库兼容性，以及真实 VoceChat 私聊的文本/Markdown/图片/语音双向收发验证；用户确认 Markdown 正常渲染、图片可预览、语音可播放。真实语音转为 16 kHz 单声道 WAV 也已通过。真实 DSH Agent 回复和 ASR 模型转写仍待联调。TTS 和音频理解提供独立扩展接口，未内置模型服务。以下保留原始项目目标和验收要求。
+先按配置文档填写凭据引用、白名单与 Session，再显式启用。安装后可在 DSH 侧栏 **插件 → VoceChat 语音** 配置识别与合成，保存后下一次请求生效。已完成本地功能验证、真实 DSH 发行库兼容性，以及真实 VoceChat 私聊的文本/Markdown/图片/已有语音双向收发验证；用户确认 Markdown 正常渲染、图片可预览、语音可播放。真实 DSH Agent 回复和云端 ASR/TTS 仍待配置服务后联调。音频理解（如 Qwen Omni）继续保留扩展接口。以下保留原始项目目标和验收要求。
 
 ## 一、项目目标
 

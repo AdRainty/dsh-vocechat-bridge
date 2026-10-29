@@ -32,10 +32,16 @@ export type OutgoingAttachment = {
     name?: string;
     mime?: string;
 };
+export type SpeechRequest = {
+    text: string;
+    voice?: string;
+    instructions?: string;
+};
 export type OutboundMessage = {
     text?: string;
     format?: 'plain' | 'markdown';
     attachments?: OutgoingAttachment[];
+    speech?: SpeechRequest;
     replyTo?: number;
 };
 export type SessionRunOptions = {

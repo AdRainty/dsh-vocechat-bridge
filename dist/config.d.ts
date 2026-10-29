@@ -36,7 +36,9 @@ export declare const defaults: {
     retentionMs: number;
     maxHistory: number;
     logLevel: string;
+    voiceEnabled: boolean;
     asrEnabled: boolean;
+    asrProvider: string;
     asrBaseUrl: string;
     asrModel: string;
     asrApiKeyRef: string;
@@ -45,10 +47,21 @@ export declare const defaults: {
     asrTimeoutMs: number;
     ffmpegPath: string;
     ffprobePath: string;
+    ttsEnabled: boolean;
     ttsProvider: string;
+    ttsBaseUrl: string;
+    ttsModel: string;
+    ttsApiKeyRef: string;
+    ttsVoice: string;
+    ttsInstructions: string;
+    ttsFormat: string;
+    ttsTimeoutMs: number;
     audioUnderstandingProvider: string;
 };
 export type BridgeConfig = typeof defaults;
+/** Only speech settings are live-editable; transport/session configuration keeps its existing lifecycle. */
+export declare const speechFields: readonly ["voiceEnabled", "asrEnabled", "asrProvider", "asrBaseUrl", "asrModel", "asrApiKeyRef", "asrLanguage", "asrAcceptedFormats", "asrTimeoutMs", "ttsEnabled", "ttsProvider", "ttsBaseUrl", "ttsModel", "ttsApiKeyRef", "ttsVoice", "ttsInstructions", "ttsFormat", "ttsTimeoutMs"];
+export declare function readConfig(input: Record<string, any>): Partial<BridgeConfig>;
 export declare function parseConfig(input?: Partial<BridgeConfig>): BridgeConfig;
 export declare function allowedDestination(c: BridgeConfig, d: {
     kind: string;

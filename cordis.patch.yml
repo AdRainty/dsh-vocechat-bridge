@@ -16,5 +16,9 @@
         privateQuietMs: 4000
         groupQuietMs: 1500
         maxWaitMs: 12000
+        voiceEnabled: true
         asrEnabled: false
+        asrProvider: openai
+        ttsEnabled: false
+        ttsProvider: openai
         allowProactive: false

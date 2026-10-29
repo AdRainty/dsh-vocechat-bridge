@@ -139,7 +139,7 @@ export class DshSessionPort implements SessionPort {
           channel: 'vocechat', destination: run.destination,
           messages: run.messages.map(m => ({ id: m.id, senderId: m.senderId, timestamp: m.timestamp,
             attachments: m.attachments.map(a => ({ kind: a.kind, name: a.name, mime: a.mime, error: a.error })) })),
-        }) + '\nThe final text is automatically returned to this destination. Use voce_send_message for media; a successful send suppresses duplicate automatic text. Use voce_quiet to finish without replying. Every send tool requires an explicit destination.';
+        }) + '\nThe final text is automatically returned to this destination. Use voce_send_message for media or voce_speak to synthesize speech when enabled; a successful send suppresses duplicate automatic text. Use voce_quiet to finish without replying. Every send tool requires an explicit destination.';
       },
     });
     this.promptDisposers.set(agent, typeof dispose === 'function' ? dispose : () => {});
@@ -154,7 +154,7 @@ export class DshSessionPort implements SessionPort {
       for (const item of message.attachments) {
         signal.throwIfAborted();
         if (item.kind === 'audio') {
-          if (item.transcript !== undefined) content.push({ type: 'text', text: item.transcript });
+          if (item.transcript !== undefined) content.push({ type: 'text', text: `语音转写（消息 ${message.id}，原文件 ${item.name}）：\n${item.transcript}` });
           else content.push({ type: 'text', text: item.error ? `Audio transcription unavailable: ${item.error}` : 'Audio transcription is disabled; no transcript is available.' });
         }
         if (!item.localPath) {

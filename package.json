@@ -1,6 +1,6 @@
 {
   "name": "dsh-vocechat-bridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Native fixed-session VoceChat bridge for DeepSeek Harness with structured media and ASR",
   "license": "MIT",
@@ -9,12 +9,15 @@
     ".": "./dist/index.js",
     "./core": "./dist/bridge.js",
     "./audio": "./dist/audio.js",
+    "./speech": "./dist/speech.js",
+    "./client": "./client/index.js",
     "./package.json": "./package.json",
     "./cordis.patch.yml": "./cordis.patch.yml"
   },
   "files": [
     "dist",
     "src",
+    "client",
     "tests",
     "scripts",
     "tsconfig.json",
@@ -34,6 +37,10 @@
     "prepack": "npm run build"
   },
   "dsh": {
+    "client": {
+      "inject": ["@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-ui-settings", "@deepseek-ai/dsh-client-ui-plugin-manager", "@deepseek-ai/dsh-api-remotes"],
+      "platform": "web"
+    },
     "bundle": {
       "patch": "./cordis.patch.yml"
     }

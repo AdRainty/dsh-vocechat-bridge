@@ -37,14 +37,24 @@
     dedupTtlMs: 86400000
     retentionMs: 86400000
     logLevel: info
+    voiceEnabled: true # 总开关；ASR / TTS 默认仍分别关闭
     asrEnabled: false
-    asrBaseUrl: 'http://127.0.0.1:8000/v1'
-    asrModel: whisper-1
+    asrProvider: openai # openai / mimo
+    asrBaseUrl: '' # 留空使用厂家官方地址；本地 Whisper 可填 http://127.0.0.1:8000/v1
+    asrModel: '' # openai 默认 whisper-1；mimo 默认 mimo-v2.5-asr
     asrAcceptedFormats: ['wav', 'mp3', 'ogg', 'm4a', 'flac', 'webm'] # 仅接受 WAV 的服务改为 ['wav']，自动转码
-    asrApiKeyRef: ''
+    asrApiKeyRef: OPENAI_API_KEY # 小米填 MIMO_API_KEY；本地无鉴权服务可留空
     asrLanguage: zh
     asrTimeoutMs: 60000
     ffmpegPath: ffmpeg
     ffprobePath: ffprobe
-    ttsProvider: ''
+    ttsEnabled: false
+    ttsProvider: openai # openai / mimo
+    ttsBaseUrl: ''
+    ttsModel: '' # openai 默认 gpt-4o-mini-tts；mimo 默认 mimo-v2.5-tts
+    ttsApiKeyRef: OPENAI_API_KEY
+    ttsVoice: '' # openai 默认 alloy；mimo 默认 mimo_default
+    ttsInstructions: '' # 声线与语气；MiMo voicedesign 模型必填
+    ttsFormat: wav # wav / mp3
+    ttsTimeoutMs: 120000
     audioUnderstandingProvider: ''

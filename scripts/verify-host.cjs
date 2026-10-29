@@ -12,6 +12,56 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { registerHooks } = require('node:module');
 const { Server } = require('node:http');
+const { runInNewContext } = require('node:vm');
+
+// Exercise the shipped client module and its Save handler against host-shaped services.
+// React hooks are a small render harness; this does not claim a real browser render.
+async function verifySettingsClient(root, entry, config) {
+  const state = [];
+  let cursor = 0, client, card, registration;
+  const keyWrites = [], mutations = [];
+  const snapshot = { status:'ready',writable:true,revision:'test-revision',
+    value:Object.fromEntries(Object.entries(config).map(([key,value])=>[key,typeof value?.get==='function'?value.get():value])) };
+  const scope = {
+    getSnapshot:()=>snapshot,subscribe:()=>()=>{},
+    async mutate(ops,revision) {
+      assert.equal(revision,snapshot.revision);
+      const next={...snapshot.value};for(const op of ops)next[op.path[0]]=op.value;
+      entry.Config(next); // Actual host validates the UI's persisted values.
+      mutations.push(...ops);snapshot.value=next;return true;
+    },
+  };
+  const credentials = {
+    async describe(){return {ok:true,value:{}};},
+    async set(ref,value){keyWrites.push({ref,present:!!value});return {ok:true};},
+  };
+  const react = {
+    createElement:(type,props,...children)=>({type,props:props||{},children:children.flat(Infinity)}),
+    useSyncExternalStore:(_subscribe,get)=>get(),useEffect(){},
+    useState(initial){const id=cursor++;if(!(id in state))state[id]=initial;return [state[id],value=>{state[id]=typeof value==='function'?value(state[id]):value;}];},
+  };
+  runInNewContext(fs.readFileSync(path.join(root,'client','index.js'),'utf8'),{
+    URL,
+    window:{__ModuleLoader__:{load(spec){assert.equal(spec.id,'dsh-vocechat-bridge');client=spec.factory(name=>{assert.equal(name,'react');return react;});}}},
+  });
+  const ctx = {
+    locale:{bind:()=>()=> 'VoceChat 语音',register:()=>()=>{}},remote:{credentials},
+    configForms:{get:id=>{assert.equal(id,'vocechat-bridge');return scope;},whileServed:(_ids,fn)=>fn()},
+    slots:{inject:(_name,fn)=>fn(),register:(spec,component)=>{registration=spec;card=component;return ()=>{};}},effect:fn=>fn(),
+  };
+  client.apply(ctx);
+  assert.equal(registration.name,'plugins.item');
+  const render=()=>{cursor=0;return card({...registration.inject(),view:'config'});};
+  const nodes=(tree,type)=>[...(tree&&typeof tree==='object'&&tree.type===type?[tree]:[]),
+    ...(tree?.children||[]).filter(v=>v&&typeof v==='object').flatMap(v=>nodes(v,type))];
+  let tree=render();assert.equal(nodes(tree,'fieldset').length,2);
+  nodes(tree,'select')[0].props.onChange({target:{value:'mimo'}});
+  tree=render();nodes(tree,'input').find(n=>n.props.type==='password').props.onChange({target:{value:'local-smoke-key'}});
+  tree=render();await nodes(tree,'button').find(n=>n.children.includes('保存')).props.onClick();
+  assert(mutations.some(op=>op.path[0]==='asrProvider'&&op.value==='mimo'));
+  assert.deepEqual(keyWrites,[{ref:'MIMO_API_KEY',present:true}]);
+  assert(render().children.some(n=>n?.props?.role==='status'&&n.children.includes('已保存，下一次语音请求生效。')));
+}
 
 async function main() {
   if (!process.versions.electron || typeof registerHooks !== 'function') {
@@ -46,6 +96,9 @@ async function main() {
     assert.deepEqual(config.userWhitelist, []);
     assert.deepEqual(config.groupWhitelist, []);
     assert.equal(config.allowProactive, false);
+    assert.equal(config.asrEnabled.get(), false);
+    assert.equal(config.ttsEnabled.get(), false);
+    assert.equal(config.asrProvider.get(), 'openai');
     Server.prototype.listen = function (...args) { listenCalls++; throw new Error('Smoke test must never open a socket.'); };
     const ctx = {
       agents: { get() { throw new Error('Disabled plugin must not resolve a live session.'); }, resume() { throw new Error('Disabled plugin must not resume a session.'); } },
@@ -64,19 +117,21 @@ async function main() {
     assert.equal(logs.filter(item => item.level === 'error').length, 0);
     assert.deepEqual(registered.map(tool => tool.name), [
       'voce_send_text', 'voce_send_image', 'voce_send_audio', 'voce_send_file',
-      'voce_send_message', 'voce_quiet', 'voce_bridge_status',
+      'voce_speak', 'voce_send_message', 'voce_quiet', 'voce_bridge_status',
     ]);
     const status = registered.find(tool => tool.name === 'voce_bridge_status');
     assert.equal(JSON.parse(await status.execute({}, {})).running, false);
     // This invokes the real defineTool validator, not the fake registry.
     const send = registered.find(tool => tool.name === 'voce_send_text');
     await assert.rejects(send.execute({ text: 'missing destination' }, {}), /invalid arguments/);
+    await verifySettingsClient(root,entry,config);
     for (const dispose of effects.reverse()) { assert.equal(typeof dispose, 'function'); await dispose(); }
     await bridge.stop(); // repeated disposal must also finish cleanly
     assert.equal(listenCalls, 0);
     assert.deepEqual(await fsp.readdir(temporary), []);
     console.log(JSON.stringify({ ok: true, dshVersion: hostVersion, configSchema: 'real host', tools: registered.length,
-      pluginEntry: 'dist/index.js', enabled: false, listenCalls, disposal: 'passed', userProfileWrites: 0,
+      pluginEntry: 'dist/index.js', settingsClient: 'registration, edit, credential write and save passed (mock services)',
+      enabled: false, listenCalls, disposal: 'passed', userProfileWrites: 0,
       modelCalls: 0, realMessages: 0 }, null, 2));
   } finally {
     Server.prototype.listen = originalListen;

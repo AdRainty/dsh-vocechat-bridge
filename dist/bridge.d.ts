@@ -23,7 +23,9 @@ export declare class Bridge {
         session: SessionPort;
         resolveCredential: CredentialResolver;
         logger?: Logger;
+        speechConfig?: () => Partial<BridgeConfig>;
     });
+    private speechConfig;
     start(): Promise<void>;
     stop(): Promise<void>;
     status(): {
@@ -31,6 +33,15 @@ export declare class Bridge {
         running: boolean;
         address: string | import("net").AddressInfo | null | undefined;
         failure: string | undefined;
+        speech: {
+            enabled: boolean;
+            asrEnabled: boolean;
+            asrProvider: string;
+            asrModel: string;
+            ttsEnabled: boolean;
+            ttsProvider: string;
+            ttsModel: string;
+        };
         sessionId: string;
         counts: {
             [k: string]: number;
