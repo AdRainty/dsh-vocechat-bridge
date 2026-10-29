@@ -9,7 +9,7 @@ export const name = 'vocechat-bridge';
 export const inject = ['agents', 'tools', 'attachments'];
 const descriptions = {
     enabled: '启用桥接（首次配置完成后再启用）', baseUrl: 'VoceChat 服务地址', botUid: '机器人 UID，用于自消息过滤',
-    botApiKeyRef: 'Bot Key 的凭据引用名', webhookSecretRef: 'Webhook 共享密钥的凭据引用名',
+    botApiKeyRef: 'Bot Key 的凭据引用名', webhookSecretRef: '接收端 POST 访问令牌的凭据引用名；与 VoceChat 可选的 16 字节 AES secret 分开设置',
     userWhitelist: '允许私聊的 UID，空数组拒绝全部', groupWhitelist: '允许群聊的 GID，空数组拒绝全部',
     groupSenderWhitelist: '群内附加发送者 UID 限制，空数组允许已授权群内成员',
     targetSessionId: '固定 DSH Session ID', agentPreset: '恢复会话使用的可选 preset',

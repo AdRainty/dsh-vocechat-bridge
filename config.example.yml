@@ -6,7 +6,7 @@
     baseUrl: 'https://chat.example.com'
     botUid: 2
     botApiKeyRef: VOCECHAT_BOT_API_KEY
-    webhookSecretRef: VOCECHAT_WEBHOOK_SECRET
+    webhookSecretRef: VOCECHAT_WEBHOOK_SECRET # 插件 POST 访问令牌引用；VoceChat 后台的可选 AES secret 留空
     webhookHost: 127.0.0.1
     webhookPort: 8898
     webhookPath: /vocehook

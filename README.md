@@ -16,7 +16,7 @@ npm pack
 dsh plugin --profile web add "K:\Code\Tools\dsh-plugins\dsh-vocechat-bridge"
 ```
 
-先按配置文档填写凭据引用、白名单与 Session，再显式启用。真实 VoceChat/ASR 服务端到端联调尚未执行；已经完成 Mock 自动化、本机 FFmpeg 转码及真实 DSH 发行库兼容性验证。TTS 和音频理解提供独立扩展接口，未内置模型服务。以下保留原始项目目标和验收要求。
+先按配置文档填写凭据引用、白名单与 Session，再显式启用。已完成 Mock 自动化、真实 DSH 发行库兼容性，以及真实 VoceChat 私聊的文本/Markdown/图片/语音接收与媒体下载验证；真实语音转为 16 kHz 单声道 WAV 也已通过。真实 DSH Agent 回复和 ASR 模型转写仍待联调。TTS 和音频理解提供独立扩展接口，未内置模型服务。以下保留原始项目目标和验收要求。
 
 ## 一、项目目标
 

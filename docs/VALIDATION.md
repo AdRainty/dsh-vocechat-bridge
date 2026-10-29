@@ -4,7 +4,7 @@
 
 ## 自动化与本机运行
 
-`npm run check`：TypeScript 严格编译通过，**63 项自动化测试通过，0 失败，0 跳过**。
+`npm run check`：TypeScript 严格编译通过，**64 项自动化测试通过，0 失败，0 跳过**。
 
 | 套件 | 数量 | 验证内容 |
 | --- | ---: | --- |
@@ -12,7 +12,7 @@
 | `bridge.test.ts` | 21 | Webhook 无鉴权 GET 验证与 POST 鉴权、实际 HTTP 文本出站、私聊/群聊、白名单/自消息/去重、持久 ACK、并发与合并、背压、语音成功失败、图片/文件入站、文字+多图片+音频+文件组合出站、部分成功、禁用/重启、请求取消、未完成 ACK 写入的停止屏障、活动临时文件保护 |
 | `dsh.test.ts` | 14 | 固定 Session、宿主忙碌队列、消息 ID/turn 归属、其他渠道混入、原生附件、冷恢复模型/preset、lease 释放、工具来源身份、quiet、失败与取消 |
 | `vocechat.test.ts` | 11 | 官方端点、Base64 X-Properties、实际 multipart 字节、音频 415 降级、资源路径、本地 realpath 白名单、格式/大小/上传异常、公网地址与 origin 拒绝、禁止重定向、响应流超时 |
-| `live-webhook.test.ts` | 2 | 隔离接收程序的 GET/POST 行为、请求诊断记录脱敏、禁止真实 DSH/ASR/发送、默认不下载媒体、显式启用后的 Mock 下载与实际音频格式/时长报告 |
+| `live-webhook.test.ts` | 3 | 隔离接收程序的 GET/POST 行为、请求诊断记录脱敏、禁止真实 DSH/ASR/发送、默认不下载媒体、显式启用后的 Mock 下载与实际音频格式/时长报告、显式明文审计模式 |
 
 测试启动真实的本地 HTTP Mock VoceChat/ASR 服务，使用假的 DSH 会话进行闭环。没有把 Mock 的固定转写结果当成真实语音识别能力。ASR provider 确实发送 multipart 文件并解析服务响应，但本次没有启动 Whisper 模型或请求云端模型。
 
@@ -31,13 +31,26 @@
 
 可复现命令见 [DSH-API.md](DSH-API.md)，脚本为 `scripts/verify-host.cjs`。这验证入口与发行库兼容性，不代表生产服务已切换。
 
-## 未执行的联调
+## 真实 VoceChat 接收与待验证范围
 
 尚未在真实 VoceChat Bot、真实 DSH Session 与真实 ASR 模型三者连接的环境中端到端发送测试消息。未改旧 Webhook、watchdog 或生产 profile。部署时按 [MIGRATION.md](MIGRATION.md) 在测试 Bot/群验证后再切换。
 
-本次已在用户授权的真实服务上使用临时 Bot Key 读取 `GET /api/bot`，返回 200；该部署的 `/api/bot/` 返回 404，不能据此判断 Key 失效。已启动独立接收程序 `scripts/live-webhook.mjs` 供临时 Bot 联调，复用生产 Bridge，但 SessionPort 仅记录本地处理结果，不连接真实 DSH 或 ASR，不发送回复。它可记录 GET/POST 状态、规范化结果和下载媒体的大小/哈希/音频信息，不记录密钥、query 值或正文；运行凭据与日志位于 Git 忽略的受限 `.runtime/` 目录。
+本次已在用户授权的真实服务上使用临时 Bot Key 读取 `GET /api/bot`，返回 200；该部署的 `/api/bot/` 返回 404，不能据此判断 Key 失效。使用独立接收程序 `scripts/live-webhook.mjs` 供临时 Bot 联调，复用生产 Bridge，但 SessionPort 仅记录本地处理结果，不连接真实 DSH 或 ASR，不发送回复。它可记录 GET/POST 状态、规范化结果和下载媒体的大小/哈希/音频信息，不记录密钥、query 值或正文；运行凭据与日志位于 Git 忽略的受限 `.runtime/` 目录。
 
-已验证本机 Webhook GET 不带密钥也返回 200，POST 未鉴权返回 401。服务端到此机器的 GET/POST 连通与真实消息推送仍需实际回调确认，不能由本机探测或 Mock 测试替代。
+2026-10-29 已实际收到远端 VoceChat 的 GET 地址验证，返回 200。本机 GET 不带密钥也返回 200，POST 未鉴权返回 401；配置完整接收地址后，首轮 **6 条真实私聊推送全部返回 202，6 条处理完成，0 条失败**。VoceChat 的可选 AES secret 保持留空，接收的是明文 JSON；URL 访问令牌是独立的接收端鉴权。
+
+| 用户测试内容 | 实际接收结果 |
+| --- | --- |
+| 普通文本 | 接收并进入结构化处理 |
+| Markdown | 接收并保留 Markdown 语法；不在普通日志记录正文 |
+| 带附件消息 | 文字与图片分别投递；JPEG 实际下载 335056 字节 |
+| 语音 | 实际下载 49880 字节，探测为 M4A / audio/mp4，时长 2.960544 秒 |
+
+另从本轮语音附件取得真实音频，实际执行 FFmpeg 转码，并用 FFprobe 验证输出为 **PCM s16le、16000 Hz、1 声道 WAV**；输出 95188 字节，时长 2.972188 秒。下载与转换临时文件已清理。本步骤没有调用 ASR，不能据此宣称已经识别语音内容。
+
+已验证的真实链路为 VoceChat 私聊推送 → 接收/规范化/去重队列 → 附件下载与音频探测/转换。群聊、主动发送、真实 DSH Agent 回复和真实 ASR 转写仍待对应服务联调；相关自动化 Mock 结果分别记录在上表。
+
+后续未带 URL 访问令牌的推送曾在鉴权阶段返回 401，并未进入上述处理统计。为匹配本次只接收明文的临时测试，独立程序可在其私有 JSON 配置中显式设 `requireWebhookToken:false`，进入不要求外部令牌的审计模式；它仍没有真实 DSH、ASR 或出站消息能力。此开关仅属于测试程序，**不属于正式插件 Config**，默认关闭；正式插件的 POST 鉴权保持不变。
 
 ## 已知限制
 

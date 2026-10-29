@@ -69,3 +69,17 @@ test('explicitly enabled live harness downloads through production client and re
   assert.equal(downloads,1);assert.equal(state.prepared,1);assert.equal(state.media[0].bytes,wav().length);
   assert.deepEqual(state.media[0].audio,{format:'wav',durationSeconds:0.1});assert.equal(state.dshConnected,false);assert.equal(state.asrEnabled,false);
 });
+
+test('explicit plaintext audit mode accepts token-free callbacks without enabling a DSH or ASR connection',async t=>{
+  const dir=await mkdtemp(join(tmpdir(),'voce-live-'));
+  const harness=await start(dir,{baseUrl:'http://127.0.0.1:1',botUid:4,botApiKey:'fixture-bot-key',webhookSecret:'fixture-secret',host:'127.0.0.1',port:0,outputDir:dir,requireWebhookToken:false});
+  t.after(async()=>{await harness.stop();await rm(dir,{recursive:true,force:true});});
+  const response=await fetch(harness.url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(fixture(1))});
+  assert.equal(response.status,202);
+  const state=await waitFor(harness.status,s=>s.bridge.counts.done===1);
+  assert.equal(state.webhookTokenRequired,false);assert.equal(state.dshConnected,false);assert.equal(state.asrEnabled,false);
+  const audit=(await readFile(join(dir,'events.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+  assert.ok(audit.some(e=>e.stage==='http'&&e.method==='POST'&&e.status===202&&e.plaintextTest===true&&!e.hasQuerySecret&&!e.hasAuthorization));
+  assert.equal(JSON.stringify(audit).includes('fixture-secret'),false);
+  assert.equal((await fetch(harness.url+'/other',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(fixture(2))})).status,404);
+});

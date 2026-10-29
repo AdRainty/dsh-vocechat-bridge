@@ -14,6 +14,7 @@ const outputDir = resolve(input.outputDir || dirname(configPath));
 await mkdir(outputDir, { recursive: true, mode: 0o700 });
 const summary = { mode: 'receive-only', dshConnected: false, asrEnabled: false,
   mediaDownloadEnabled: input.allowMediaDownload === true,
+  webhookTokenRequired: input.requireWebhookToken !== false,
   httpRequests: 0, lastHttpRequest: null,
   startedAt: new Date().toISOString(), received: 0, prepared: 0, media: [], lastInbound: null };
 let bridge;
@@ -65,14 +66,20 @@ bridge = new Bridge({ enabled: true, baseUrl: input.baseUrl, botUid: input.botUi
 const handleHttp = bridge.handleHttp.bind(bridge);
 bridge.handleHttp = async (req, res) => {
   const url = new URL(req.url || '/', 'http://localhost');
+  const plaintextTest = input.requireWebhookToken === false && req.method === 'POST' && url.pathname === bridge.config.webhookPath;
   const probe = { method: req.method, routeMatches: url.pathname === bridge.config.webhookPath,
     hasQuerySecret: url.searchParams.has('secret'), hasAuthorization: Boolean(req.headers.authorization),
+    plaintextTest,
     isLocal: ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) };
   summary.httpRequests++;
   res.once('finish', () => {
     summary.lastHttpRequest = { at: new Date().toISOString(), ...probe, status: res.statusCode };
     void record({ stage: 'http', ...summary.lastHttpRequest }).then(saveStatus).catch(() => {});
   });
+  // Explicitly opt-in receive-only testing can accept the platform's plaintext
+  // callbacks. Adapt only this local audit harness to the internal Bridge auth
+  // contract; the plugin's defaults and public production API do not change.
+  if (plaintextTest) req.headers.authorization = `Bearer ${input.webhookSecret}`;
   return handleHttp(req, res);
 };
 const accept = bridge.accept.bind(bridge);

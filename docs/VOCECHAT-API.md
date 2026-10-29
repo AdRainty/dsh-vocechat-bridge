@@ -1,6 +1,6 @@
 # VoceChat API 调查记录
 
-调查日期：2026-10-29。实现优先依据官方 Bot 文档、公开 Rust 源码和本工作区旧桥接代码。没有用真实服务发送测试消息。
+调查日期：2026-10-29。实现优先依据官方 Bot 文档、公开 Rust 源码和本工作区旧桥接代码。已验证真实私聊接收与媒体下载，结果见 [VALIDATION.md](VALIDATION.md)；Bot 出站仍仅完成 Mock 验证。
 
 ## 来源与核实结论
 
@@ -30,4 +30,4 @@ Agent 出站本地文件必须位于管理员明确允许的目录；检查 `rea
 
 ## 自动化验证边界
 
-`tests/vocechat.test.ts` 使用本地 HTTP Mock 检查端点、Content-Type、Base64 元数据、multipart 实际字节、下载参数、大小限制、路径白名单、错误脱敏、取消和音频兼容降级。公网地址分类和拒绝路径离线验证；不发起真实公网附件下载，不宣称真实 VoceChat 联调已完成。
+`tests/vocechat.test.ts` 使用本地 HTTP Mock 检查端点、Content-Type、Base64 元数据、multipart 实际字节、下载参数、大小限制、路径白名单、错误脱敏、取消和音频兼容降级。公网地址分类和拒绝路径离线验证。用户授权的真实 VoceChat 私聊接收与媒体下载另行通过临时 Bot 联调验证，不能以这些结果代替出站、DSH Agent 或 ASR 的真实全链路验证。
