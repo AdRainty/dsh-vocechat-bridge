@@ -314,6 +314,17 @@ export class Bridge {
     }
     return {...message,attachments};
   }
+  private async assertReplyDestination(destination:Destination,replyTo:number,signal:AbortSignal) {
+    // The reply endpoint derives its destination from MID, bypassing send_to_*.
+    // Prove that MID belongs to the allowlisted destination before any output.
+    const known=this.store.jobs.find(job=>job.sourceKey===this.sourceKey() && job.message.id===String(replyTo));
+    if(known) {
+      if(known.message.destination.kind!==destination.kind || known.message.destination.id!==destination.id)throw new Error('REPLY_DESTINATION_MISMATCH');
+      return;
+    }
+    const recent=await this.client.getHistory(destination,this.config.botUid,100,AbortSignal.any([signal,AbortSignal.timeout(this.config.historyTimeoutMs)]));
+    if(!recent.some(message=>message.id===String(replyTo)))throw new Error('REPLY_TARGET_UNVERIFIED');
+  }
   send(destination:Destination,message:OutboundMessage,options:{proactive?:boolean;replyTo?:number;signal?:AbortSignal}={}) {
     const perform=async()=>{
       if(!this.running)throw new Error('BRIDGE_STOPPED');
@@ -324,6 +335,7 @@ export class Bridge {
       const signal=options.signal ? AbortSignal.any([options.signal,this.controller.signal]) : this.controller.signal;
       const replyTo=message.replyTo??options.replyTo;
       if(replyTo!==undefined && (!Number.isSafeInteger(replyTo)||replyTo<=0))throw new Error('INVALID_REPLY_ID');
+      if(replyTo!==undefined)await this.assertReplyDestination(destination,replyTo,signal);
       const receipts:unknown[]=[];
       try {
       let speech;
@@ -338,15 +350,14 @@ export class Bridge {
         }finally{await rm(dir,{recursive:true,force:true});this.activeTempDirs.delete(dir);}
       }
       const text=Array.from(message.text || '');
-      if(!text.length && !speech && replyTo!==undefined)receipts.push(await this.client.sendText(destination,'附件',{replyTo,signal}));
       for(let i=0;i<text.length;i+=this.config.textSegmentChars) {
         signal.throwIfAborted();receipts.push(await this.client.sendText(destination,text.slice(i,i+this.config.textSegmentChars).join(''),{replyTo:i===0?replyTo:undefined,format:message.format,signal}));
       }
       if(speech)receipts.push(await this.client.sendAudioBytes(destination,speech.bytes,{name:speech.name,mime:speech.mime},
-        {replyTo:text.length?undefined:replyTo,signal}));
+        {replyTo:receipts.length?undefined:replyTo,signal}));
       for(const a of message.attachments||[]) {
         signal.throwIfAborted();
-        receipts.push(await this.client.sendAttachment(destination,a,{replyTo:text.length?undefined:replyTo,signal,
+        receipts.push(await this.client.sendAttachment(destination,a,{replyTo:receipts.length?undefined:replyTo,signal,
           validate:a.kind==='audio'?async(bytes,name,mime)=>{
             const dir=join(this.config.tempDir,`job-${randomUUID()}`);this.activeTempDirs.add(dir);await mkdir(dir,{recursive:true,mode:0o700});
             try{const file=join(dir,'outgoing.media');await writeFile(file,bytes,{mode:0o600});await probeAudio({path:file,name,mime},{maxBytes:this.config.maxMediaBytes,maxDurationSeconds:this.config.maxAudioSeconds,timeoutMs:this.config.requestTimeoutMs,ffmpegPath:this.config.ffmpegPath,ffprobePath:this.config.ffprobePath,tempDir:dir},signal);}

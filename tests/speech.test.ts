@@ -43,6 +43,7 @@ test('MiMo ASR normalizes WAV, uses the vendor envelope and preserves the origin
 test('both TTS vendors synthesize, validate, upload and send voice; live settings and disabled state apply',async t=>{
   const requests:{url:string;json:any}[]=[];const sent:any[]=[];let uploads=0;
   const {dir,base}=await fixture(t,(req,res,body)=>{
+    if(req.url==='/api/bot/user/1/messages?context=100'){res.end(JSON.stringify([{mid:50,from_uid:1,created_at:1,target:{uid:2},detail:{type:'normal',content_type:'text/plain',content:'test voice reply'}}]));return;}
     if(req.url==='/v1/audio/speech'){requests.push({url:req.url,json:JSON.parse(body.toString())});res.end(wav());return;}
     if(req.url==='/v1/chat/completions'){requests.push({url:req.url,json:JSON.parse(body.toString())});res.end(JSON.stringify({choices:[{message:{audio:{data:wav().toString('base64')}}}]}));return;}
     if(req.url==='/api/bot/file/prepare'){res.end('"upload"');return;}
@@ -56,13 +57,13 @@ test('both TTS vendors synthesize, validate, upload and send voice; live setting
   const bridge=new Bridge({enabled:true,baseUrl:base,botUid:2,targetSessionId:'test',userWhitelist:[1],webhookPort:0,
     statePath:join(dir,'state.json'),tempDir:join(dir,'tmp')},{session:{async run(){return {quiet:true};}},resolveCredential:async()=>'test-key',speechConfig:()=>settings});
   await bridge.start();t.after(()=>bridge.stop());
-  await bridge.send({kind:'user',id:1},{speech:{text:'第一条'}});
+  await bridge.send({kind:'user',id:1},{speech:{text:'第一条'},replyTo:50});
   settings={...settings,ttsProvider:'mimo',ttsModel:'mimo-v2.5-tts-voicedesign'};
   await bridge.send({kind:'user',id:1},{speech:{text:'第二条'}});
   assert.equal(requests[0].json.input,'第一条');assert.equal(requests[0].json.response_format,'wav');assert.equal(requests[0].json.instructions,'放慢一点');
   assert.equal(requests[1].json.messages[1].role,'assistant');assert.equal(requests[1].json.messages[1].content,'第二条');
   assert.equal(requests[1].json.audio.voice,undefined);assert.equal(uploads,2);
-  assert.deepEqual(sent.map(s=>s.type),['vocechat/audio','vocechat/audio']);assert.deepEqual(await readdir(join(dir,'tmp')),[]);
+  assert.deepEqual(sent.map(s=>s.type),['vocechat/audio','vocechat/audio']);assert.deepEqual(sent.map(s=>s.url),['/api/bot/reply/50','/api/bot/send_to_user/1']);assert.deepEqual(await readdir(join(dir,'tmp')),[]);
   settings={...settings,ttsEnabled:false};await assert.rejects(bridge.send({kind:'user',id:1},{speech:{text:'不发送'}}),/TTS_DISABLED/);
   assert.equal(requests.length,2);
 });

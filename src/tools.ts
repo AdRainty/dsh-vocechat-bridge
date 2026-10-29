@@ -19,6 +19,7 @@ const speechProperties = {
   voice: {type:'string',description:'Optional vendor voice ID; defaults to settings.'},
   instructions: {type:'string',description:'Optional voice/style instructions; defaults to settings.'},
 };
+const replySpec = { type: 'integer', description: 'Optional positive message ID for a native VoceChat Reply. Must belong to destination. For combined messages only the first sent message quotes it.' };
 function destination(value: any): Destination {
   if (!value || !['user', 'group'].includes(value.kind) || !Number.isSafeInteger(value.id) || value.id <= 0) throw new Error('INVALID_DESTINATION');
   return { kind: value.kind, id: value.id };
@@ -49,18 +50,18 @@ export function registerVoceTools(ctx: { tools: { register(tool: any): any } }, 
     ctx.tools.register(defineTool({ name, description, parameters, output,
       isConcurrencySafe: () => false, execute }));
   register('voce_send_text', 'Send text to an explicit whitelisted VoceChat destination. Proactive sending requires allowProactive. A successful reply suppresses duplicate automatic text.', {
-    destination: destinationSpec, text: { type: 'string', required: true }, format: { type: 'string', enum: ['plain', 'markdown'], description: 'Text format; defaults to plain.' }, replyTo: { type: 'integer' },
+    destination: destinationSpec, text: { type: 'string', required: true }, format: { type: 'string', enum: ['plain', 'markdown'], description: 'Text format; defaults to plain.' }, replyTo: replySpec,
   }, (args, exec) => send(args, exec, { text: args.text, format: args.format, replyTo: args.replyTo }));
   for (const kind of ['image', 'audio', 'file'] as const) {
     register(`voce_send_${kind}`, `Upload and send an existing ${kind} to an explicit whitelisted VoceChat destination. Specify exactly one local path or permitted remote URL.`, {
-      destination: destinationSpec, path: { type: 'string' }, url: { type: 'string' }, name: { type: 'string' }, mime: { type: 'string' }, replyTo: { type: 'integer' },
+      destination: destinationSpec, path: { type: 'string' }, url: { type: 'string' }, name: { type: 'string' }, mime: { type: 'string' }, replyTo: replySpec,
     }, (args, exec) => send(args, exec, { attachments: [media({ ...args, kind })], replyTo: args.replyTo }));
   }
   register('voce_speak', 'Synthesize text with the configured speech vendor and send a VoceChat voice message. Requires speech synthesis enabled in settings. A successful reply suppresses duplicate automatic text.', {
-    destination:destinationSpec,...speechProperties,replyTo:{type:'integer'},
+    destination:destinationSpec,...speechProperties,replyTo:replySpec,
   },(args,exec)=>send(args,exec,{speech:{text:args.text,voice:args.voice,instructions:args.instructions},replyTo:args.replyTo}));
   register('voce_send_message', 'Send a combined VoceChat reply: optional text, synthesized speech and ordered image/audio/file attachments. Explicit destination is required. Speech uses settings; local/remote attachments use media allowlists.', {
-    destination: destinationSpec, text: { type: 'string' }, format: { type: 'string', enum: ['plain', 'markdown'], description: 'Text format; defaults to plain.' }, replyTo: { type: 'integer' },
+    destination: destinationSpec, text: { type: 'string' }, format: { type: 'string', enum: ['plain', 'markdown'], description: 'Text format; defaults to plain.' }, replyTo: replySpec,
     attachments: { type: 'array', items: { type: 'object', additionalProperties: false, properties: mediaProperties } },
     speech:{type:'object',additionalProperties:false,properties:speechProperties},
   }, (args, exec) => send(args, exec, { text: args.text, format: args.format, attachments: args.attachments?.map(media), speech:args.speech, replyTo: args.replyTo }));

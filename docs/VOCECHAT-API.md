@@ -16,7 +16,7 @@
 
 不要把这两个 Bot 接口写成 `/api/user/{uid}/history?limit=N` 或 `/api/group/{gid}/history?limit=N`：后两者需要普通用户 Token，Bot Key 不等于用户登录 Token。当前 Bot 历史端点没有 `before` 参数；自动背景检查最新 100 条并筛选早于当前批次的消息。旧部署不支持时返回安全错误码，新消息仍正常提交，不尝试读取管理员凭据或登录态。
 
-公开 Rust master 源码并不覆盖该部署的全部新增能力。0.5.38 OpenAPI 还列出 `POST /api/bot/reply/{mid}`；当前 `replyTo` 仍保持既有的可见引用行为，尚未切换该新增端点。Bot 历史可见性与 Webhook 投递是两条链路，不能用“能查到”推断“已经 POST 到插件”；本地入站诊断只记录 ID、结果及忽略原因。
+公开 Rust master 源码并不覆盖该部署的全部新增能力。0.5.38 OpenAPI 还列出 `POST /api/bot/reply/{mid}`，当前 `replyTo` 使用该端点实现原生引用。Bot 历史可见性与 Webhook 投递是两条链路，不能用“能查到”推断“已经 POST 到插件”；本地入站诊断只记录 ID、结果及忽略原因。
 
 ## Bot 消息与 Webhook
 
@@ -28,7 +28,11 @@ Bot 消息能出现在历史和 SSE 中，却不一定触发 Webhook。已验证
 
 ## 指定消息回复的限制
 
-公开 Rust master 中的 Bot 发送函数创建 `normal` 消息；普通用户 Token 的回复接口不能直接假设可用 Bot Key。实际 0.5.38 已提供专用 Bot reply 端点，见上文，但本插件的 `replyTo` 仍使用 `> 回复消息 #MID` 的 Markdown 可见引用，提供逻辑关联；不是原生可点击引用气泡。组合消息的关联由桥接层首条文字承担。
+公开 Rust master 中的 Bot 发送函数创建 `normal` 消息；普通用户 Token 的回复接口不能直接假设可用 Bot Key。官方 0.5.38 的专用 Bot Reply 接口为 `POST /api/bot/reply/{mid}`，使用 `x-api-key`，支持与普通发送相同的 `text/plain`、`text/markdown`、`vocechat/file` 和 `vocechat/audio` 请求体、Base64 `X-Properties`，返回新消息的数字 ID。存储结果为 `detail.type: reply`、`detail.mid: 被引用的消息 ID`；正文保持原文。
+
+Reply 端点按原消息 ID 决定会话，因此桥接层在上传、TTS 和发送前，先核对本地同源入站记录；否则查询显式 `destination` 的最近 100 条历史并核对 ID 与会话。不能确认归属时拒绝发送，避免 ID 绕过目标白名单。长文分段和组合发送仅首条消息带原生引用；媒体独立回复无需文字占位。语音 HTTP 415 的文件格式降级仍使用同一个 Reply 端点；HTTP 404、超时及其他失败不回退为普通发送，避免意外失去引用或重发。
+
+2026-10-30 使用未修改的官方 0.5.38 服务在本地隔离账号验证：私聊、群聊、引用 Bot 自己发出的消息、图片、文件、语音及组合发送均保存正确的原生 Reply 关系；另验证不同会话的 ID 被桥接层拒绝。未使用生产凭据或发送到真实会话。
 
 ## Webhook 鉴权与加密
 

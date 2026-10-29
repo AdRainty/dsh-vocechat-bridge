@@ -59,9 +59,14 @@ export class VoceChatClient {
     }
   }
 
-  private endpoint(destination: Destination): string {
+  private endpoint(destination: Destination, replyTo?: number): string {
     if (!['user', 'group'].includes(destination.kind)) throw new Error('INVALID_TARGET_KIND');
-    return `api/bot/send_to_${destination.kind}/${positiveId(destination.id)}`;
+    positiveId(destination.id);
+    if (replyTo !== undefined) {
+      if (!Number.isSafeInteger(replyTo) || replyTo <= 0) throw new Error('INVALID_REPLY_ID');
+      return `api/bot/reply/${replyTo}`;
+    }
+    return `api/bot/send_to_${destination.kind}/${destination.id}`;
   }
 
   private async request(endpoint: string, init: RequestInit = {}, maxBytes = 64 * 1024): Promise<{ bytes: Buffer; contentType: string }> {
@@ -86,10 +91,8 @@ export class VoceChatClient {
   async sendText(destination: Destination, text: string, options: SendOptions = {}): Promise<SendResult> {
     if (!text.trim()) throw new Error('EMPTY_TEXT');
     if (options.format !== undefined && !['plain', 'markdown'].includes(options.format)) throw new Error('INVALID_TEXT_FORMAT');
-    // Public Bot API has no native reply operation; a visible quote retains logical linkage.
-    const body = options.replyTo === undefined ? text : `> 回复消息 #${positiveId(options.replyTo)}\n\n${text}`;
-    const result = await this.request(this.endpoint(destination), {
-      method: 'POST', headers: { 'content-type': options.replyTo !== undefined || options.format === 'markdown' ? 'text/markdown' : 'text/plain' }, body, signal: options.signal,
+    const result = await this.request(this.endpoint(destination, options.replyTo), {
+      method: 'POST', headers: { 'content-type': options.format === 'markdown' ? 'text/markdown' : 'text/plain' }, body: text, signal: options.signal,
     });
     return { messageId: this.parseMessageId(result.bytes) };
   }
@@ -199,7 +202,7 @@ export class VoceChatClient {
 
   async sendAttachment(destination: Destination, source: OutgoingAttachment, options: SendOptions = {}): Promise<SendResult> {
     // Validate target before doing I/O, even when caller bypasses the bridge.
-    this.endpoint(destination);
+    this.endpoint(destination, options.replyTo);
     if (!['image', 'audio', 'file'].includes(source.kind)) throw new Error('INVALID_ATTACHMENT_KIND');
     const media = await this.loadSource(source, options.signal);
     return this.sendMedia(destination,source.kind,media,options);
@@ -211,7 +214,7 @@ export class VoceChatClient {
   }
 
   private async sendMedia(destination: Destination, kind: OutgoingAttachment['kind'], media: {bytes:Buffer;name:string;contentType:string}, options: SendOptions): Promise<SendResult> {
-    const endpoint = this.endpoint(destination);
+    const endpoint = this.endpoint(destination, options.replyTo);
     if (kind === 'image' && !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(media.contentType)) {
       throw new Error('UNSUPPORTED_IMAGE_FORMAT');
     }

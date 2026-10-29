@@ -11,6 +11,7 @@ import { boundedResponse, downloadPublicUrl, isPublicAddress, validateHttpUrl } 
 async function fixture(t: any) {
   const events: { path: string; body: Buffer; type: string; props: any }[] = [];
   let rejectAudio = false;
+  let replyStatus = 200;
   let rejectUpload = false;
   let redirect = false;
   let stallBody = false;
@@ -47,8 +48,9 @@ async function fixture(t: any) {
         assert.equal(url.searchParams.get('file_path'), '2026/10/29/dbd06c27-523d-450d-9767-5a211fed229a');
         res.setHeader('content-type', 'image/png');
         res.end(Buffer.from([1, 2, 3]));
-      } else if (url.pathname.startsWith('/api/bot/send_to_')) {
-        if (rejectAudio && type === 'vocechat/audio') { res.writeHead(415); res.end('unsupported'); }
+      } else if (url.pathname.startsWith('/api/bot/send_to_') || /^\/api\/bot\/reply\/\d+$/.test(url.pathname)) {
+        if (url.pathname.startsWith('/api/bot/reply/') && replyStatus !== 200) { res.writeHead(replyStatus); res.end('reply failed'); }
+        else if (rejectAudio && type === 'vocechat/audio') { res.writeHead(415); res.end('unsupported'); }
         else res.end(String(++nextId));
       } else { res.writeHead(404); res.end(); }
     } catch (error) { res.writeHead(500); res.end(String(error)); }
@@ -61,20 +63,43 @@ async function fixture(t: any) {
   const baseUrl = `http://127.0.0.1:${address.port}`;
   const client = new VoceChatClient({ baseUrl, resolveApiKey: async () => 'mock-key', allowedLocalRoots: [dir] });
   return { client, dir, events, baseUrl, setRejectAudio: () => { rejectAudio = true; }, setRejectUpload: () => { rejectUpload = true; },
+    setReplyStatus:(value:number)=>{replyStatus=value;},
     setHistory:(value:any[])=>{history=value;},historyQueries,
     setRedirect: () => { redirect = true; }, setStallBody: () => { stallBody = true; } };
 }
 
-test('private/group text, unicode, multiline and logical reply use documented Bot endpoints', async t => {
+test('private/group text and native replies preserve Unicode, format and original body', async t => {
   const f = await fixture(t);
   assert.deepEqual(await f.client.sendText({ kind: 'user', id: 3 }, '第一行\n第二行'), { messageId: 101 });
   assert.deepEqual(await f.client.sendText({ kind: 'group', id: 8 }, '回答', { replyTo: 29 }), { messageId: 102 });
   assert.equal(f.events[0].path, '/api/bot/send_to_user/3');
   assert.equal(f.events[0].body.toString(), '第一行\n第二行');
-  assert.equal(f.events[1].type, 'text/markdown');
-  assert.equal(f.events[1].body.toString(), '> 回复消息 #29\n\n回答');
+  assert.equal(f.events[1].path, '/api/bot/reply/29');
+  assert.equal(f.events[1].type, 'text/plain');
+  assert.equal(f.events[1].body.toString(), '回答');
+  await f.client.sendText({kind:'user',id:3},'**原生引用**',{replyTo:30,format:'markdown'});
+  assert.equal(f.events[2].path,'/api/bot/reply/30');
+  assert.equal(f.events[2].type,'text/markdown');assert.equal(f.events[2].body.toString(),'**原生引用**');
   await assert.rejects(f.client.sendText({ kind: 'group', id: -1 }, 'x'), /INVALID_TARGET_ID/);
   await assert.rejects(f.client.sendText({ kind: 'user', id: 3 }, '  '), /EMPTY_TEXT/);
+});
+
+test('native media replies retain metadata and reply target through audio 415 fallback, never downgrade to a normal send',async t=>{
+  const f=await fixture(t);
+  const file=path.join(f.dir,'引用附件.txt');await writeFile(file,'attachment');
+  await f.client.sendAttachment({kind:'group',id:8},{kind:'file',path:file},{replyTo:29});
+  assert.equal(f.events.at(-1)?.path,'/api/bot/reply/29');
+  assert.equal(f.events.at(-1)?.props.name,'引用附件.txt');
+  f.setRejectAudio();
+  const audio=await f.client.sendAudioBytes({kind:'user',id:3},Buffer.from('RIFF'),{name:'voice.wav',mime:'audio/wav'},{replyTo:30});
+  assert.equal(audio.audioFallback,true);
+  assert.deepEqual(f.events.slice(-2).map(e=>[e.path,e.type]),[['/api/bot/reply/30','vocechat/audio'],['/api/bot/reply/30','vocechat/file']]);
+  const count=f.events.length;
+  await assert.rejects(f.client.sendAttachment({kind:'group',id:8},{kind:'file',path:file},{replyTo:0}),/INVALID_REPLY_ID/);
+  assert.equal(f.events.length,count);
+  f.setReplyStatus(404);
+  await assert.rejects(f.client.sendText({kind:'group',id:8},'no duplicate',{replyTo:29}),/VOCECHAT_HTTP_404/);
+  assert.equal(f.events.length,count+1);assert.equal(f.events.at(-1)?.path,'/api/bot/reply/29');
 });
 
 test('Bot history uses context count, restores both DM directions and isolates groups',async t=>{

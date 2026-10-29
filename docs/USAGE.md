@@ -120,7 +120,21 @@ VoceChat 文档的 `set/get secret` 接口控制可选的**消息内容加密**�
 
 包含 `speech` 时先完成合成及音频校验，再依次发送文字、合成语音、数组中的附件；附件最多 20 项。平台不能在单个气泡中混放这些内容，所以会拆成多条相邻消息。成功工具发送抑制本轮重复自动回复。部分成功时错误带 `sent:true` 和已经确认的 `receipts`，不会自动重发已有片段。合成音频直接从受限的 Provider 字节发送，不需要开放临时目录给 `allowedLocalRoots`。
 
-`replyTo` 使用 Bot API 可实现的可见 Markdown 消息 ID 引用，不是原生引用气泡。仅附件回复时先发引用文字，再发附件。音频优先 `vocechat/audio`，明确 HTTP 415 时以普通音频文件降级，并返回 `audioFallback:true`。
+所有发送工具的 `replyTo` 都使用 `POST /api/bot/reply/{mid}` 创建 VoceChat 原生引用回复，包括普通文本、Markdown、图片、文件、已有音频和 TTS 语音。填原消息的数字 ID，`destination` 仍须明确指定同一个私聊或群聊，例如：
+
+```json
+{
+  "destination": {"kind":"group","id":10},
+  "text":"针对这条消息的回复",
+  "replyTo":1234
+}
+```
+
+插件先从同一服务和 Bot 的本地入站缓冲记录核对引用消息的会话归属；未命中时查询该会话最近 100 条历史。记录属于其他会话时报 `REPLY_DESTINATION_MISMATCH`，仍无法确认时报 `REPLY_TARGET_UNVERIFIED`，均不会发送。较早且已从本地记录和历史窗口移出的消息无法用于 `replyTo`。目标白名单和主动发送开关继续生效。
+
+长文本、文字与媒体组合、多附件回复仅首条实际发送的消息带引用，其余按原顺序发送；纯附件、纯语音直接作为原生 Reply，不额外发送占位文字。不传 `replyTo` 时使用普通发送接口；自动文本回发维持普通发送，不默认引用本批消息。已在官方 0.5.38 上验证；服务端缺少 Reply 接口或目标消息已删除时返回 HTTP 错误，不自动降级成普通发送或 Markdown 消息 ID 引用。
+
+音频优先 `vocechat/audio`，明确 HTTP 415 时以普通音频文件降级，并返回 `audioFallback:true`；降级仍保留原生 Reply 的目标 ID。
 
 ## 附带历史与入站诊断
 

@@ -162,6 +162,23 @@ test('partial combined send returns delivered receipts and does not hide partial
   await assert.rejects(bridge.send({kind:'user',id:10},{text:'already sent',attachments:[{kind:'image',path:'missing'}]}),(error:any)=>error.message==='PARTIAL_SEND_FAILED' && error.sent===true && error.receipts.length===1);
   assert.equal(sent.length,1);
 });
+
+test('native reply verifies conversation ownership and quotes only the first text or media without placeholder messages',async t=>{
+  const f=await setup(t,{textSegmentChars:2,historyContextMessages:0},async()=>({quiet:true}));
+  f.bridge.client.options.allowedLocalRoots=[f.dir];
+  const file=join(f.dir,'reply.txt');await writeFile(file,'test attachment');
+  await f.bridge.accept(event(200,10,20));await waitFor(()=>f.bridge.status().counts.done===1);
+  await assert.rejects(f.bridge.send({kind:'user',id:10},{text:'wrong chat',replyTo:200}),/REPLY_DESTINATION_MISMATCH/);
+  await assert.rejects(f.bridge.send({kind:'group',id:20},{attachments:[{kind:'file',path:file}],replyTo:999}),/REPLY_TARGET_UNVERIFIED/);
+  assert.equal(f.sent.length,0);
+  const combined=await f.bridge.send({kind:'group',id:20},{text:'甲乙丙',attachments:[{kind:'file',path:file}],replyTo:200});
+  assert.equal(combined.length,3);
+  assert.deepEqual(f.sent.map(s=>[s.url,s.type]),[['/api/bot/reply/200','text/plain'],['/api/bot/send_to_group/20','text/plain'],['/api/bot/send_to_group/20','vocechat/file']]);
+  f.setHistory([{...event(201,2),target:{uid:10}}]);
+  const mediaOnly=await f.bridge.send({kind:'user',id:10},{attachments:[{kind:'file',path:file},{kind:'file',path:file}],replyTo:201});
+  assert.equal(mediaOnly.length,2);
+  assert.deepEqual(f.sent.slice(-2).map(s=>[s.url,s.type]),[['/api/bot/reply/201','vocechat/file'],['/api/bot/send_to_user/10','vocechat/file']]);
+});
 test('same bridge can stop and restart, and sends fail immediately while stopped',async t=>{
   const {bridge}=await setup(t);await bridge.stop();await assert.rejects(bridge.send({kind:'user',id:10},{text:'x'}),/BRIDGE_STOPPED/);
   await bridge.start();await bridge.accept(event(1));await waitFor(()=>bridge.status().counts.done===1);
