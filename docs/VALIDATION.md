@@ -4,14 +4,15 @@
 
 ## 自动化与本机运行
 
-`npm run check`：TypeScript 严格编译通过，**61 项自动化测试通过，0 失败，0 跳过**。
+`npm run check`：TypeScript 严格编译通过，**63 项自动化测试通过，0 失败，0 跳过**。
 
 | 套件 | 数量 | 验证内容 |
 | --- | ---: | --- |
 | `audio.test.ts` | 15 | 文件 magic、WAV 实际时长、压缩格式探测、大小/时长限制、multipart ASR、无鉴权本地服务、HTTP/连接/格式错误、超时取消、凭据去敏、真实 FFmpeg 转码及清理 |
-| `bridge.test.ts` | 21 | Webhook GET/POST 鉴权、实际 HTTP 文本出站、私聊/群聊、白名单/自消息/去重、持久 ACK、并发与合并、背压、语音成功失败、图片/文件入站、文字+多图片+音频+文件组合出站、部分成功、禁用/重启、请求取消、未完成 ACK 写入的停止屏障、活动临时文件保护 |
+| `bridge.test.ts` | 21 | Webhook 无鉴权 GET 验证与 POST 鉴权、实际 HTTP 文本出站、私聊/群聊、白名单/自消息/去重、持久 ACK、并发与合并、背压、语音成功失败、图片/文件入站、文字+多图片+音频+文件组合出站、部分成功、禁用/重启、请求取消、未完成 ACK 写入的停止屏障、活动临时文件保护 |
 | `dsh.test.ts` | 14 | 固定 Session、宿主忙碌队列、消息 ID/turn 归属、其他渠道混入、原生附件、冷恢复模型/preset、lease 释放、工具来源身份、quiet、失败与取消 |
 | `vocechat.test.ts` | 11 | 官方端点、Base64 X-Properties、实际 multipart 字节、音频 415 降级、资源路径、本地 realpath 白名单、格式/大小/上传异常、公网地址与 origin 拒绝、禁止重定向、响应流超时 |
+| `live-webhook.test.ts` | 2 | 隔离接收程序的 GET/POST 行为、请求诊断记录脱敏、禁止真实 DSH/ASR/发送、默认不下载媒体、显式启用后的 Mock 下载与实际音频格式/时长报告 |
 
 测试启动真实的本地 HTTP Mock VoceChat/ASR 服务，使用假的 DSH 会话进行闭环。没有把 Mock 的固定转写结果当成真实语音识别能力。ASR provider 确实发送 multipart 文件并解析服务响应，但本次没有启动 Whisper 模型或请求云端模型。
 
@@ -33,6 +34,10 @@
 ## 未执行的联调
 
 尚未在真实 VoceChat Bot、真实 DSH Session 与真实 ASR 模型三者连接的环境中端到端发送测试消息。未改旧 Webhook、watchdog 或生产 profile。部署时按 [MIGRATION.md](MIGRATION.md) 在测试 Bot/群验证后再切换。
+
+本次已在用户授权的真实服务上使用临时 Bot Key 读取 `GET /api/bot`，返回 200；该部署的 `/api/bot/` 返回 404，不能据此判断 Key 失效。已启动独立接收程序 `scripts/live-webhook.mjs` 供临时 Bot 联调，复用生产 Bridge，但 SessionPort 仅记录本地处理结果，不连接真实 DSH 或 ASR，不发送回复。它可记录 GET/POST 状态、规范化结果和下载媒体的大小/哈希/音频信息，不记录密钥、query 值或正文；运行凭据与日志位于 Git 忽略的受限 `.runtime/` 目录。
+
+已验证本机 Webhook GET 不带密钥也返回 200，POST 未鉴权返回 401。服务端到此机器的 GET/POST 连通与真实消息推送仍需实际回调确认，不能由本机探测或 Mock 测试替代。
 
 ## 已知限制
 

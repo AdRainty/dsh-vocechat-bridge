@@ -56,11 +56,15 @@ test('normalize official direct/group payload, media and invalid event',()=>{
   assert.equal(normalizeWebhook(p)?.attachments[0].kind,'image');
   assert.equal(normalizeWebhook({...p,detail:{...p.detail,type:'edit'}}),undefined);
 });
-test('HTTP webhook authentication, validation handshake and durable ACK',async t=>{
+test('HTTP webhook public GET validation, authenticated POST and durable ACK',async t=>{
   const {bridge,url,calls}=await setup(t);
-  assert.equal((await fetch(url)).status,401);
+  assert.equal((await fetch(url)).status,200);
+  assert.equal((await fetch(url+'?secret=wrong-secret')).status,200);
   assert.equal((await fetch(url+'?secret=test-secret')).status,200);
   assert.equal((await fetch(url+'/wrong?secret=test-secret')).status,404);
+  assert.equal((await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(event(1))})).status,401);
+  assert.equal((await fetch(url+'?secret=wrong-secret',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(event(1))})).status,401);
+  assert.equal(bridge.store.jobs.length,0);
   const headers={authorization:'Bearer test-secret','content-type':'application/json'};
   assert.equal((await fetch(url,{method:'POST',headers,body:'{'})).status,400);
   const result=await fetch(url,{method:'POST',headers,body:JSON.stringify(event(1))});assert.equal(result.status,202);

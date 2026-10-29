@@ -24,7 +24,7 @@ dsh plugin --profile web add "K:\Code\Tools\dsh-plugins\dsh-vocechat-bridge"
 
 敏感值仅存 DSH credentials 或进程环境。`botApiKeyRef`、`webhookSecretRef`、`asrApiKeyRef` 填的是**引用名**，不填实际 Key。credentials 服务存在时优先解析；未解析到再读取同名环境变量。每次请求重新解析，可以轮换凭据。ASR 自托管无鉴权服务允许空引用。
 
-Webhook 建议绑定 loopback，由反向代理转发。插件要求共享 secret：支持 `Authorization: Bearer <secret>`，或在 VoceChat 的 Webhook URL 配置 `https://桥接入口/vocehook?secret=<secret>`。GET 验证与 POST 投递均校验 secret。反向代理可代为注入 Authorization，避免 URL 中保存密钥；配置代理访问日志时应隐藏 query。插件日志不记录 URL、请求体或凭据。
+Webhook 建议绑定 loopback，由反向代理转发。精确 Webhook 路径的 GET 无需鉴权，直接返回 200，供 VoceChat 验证地址；该请求不接收消息、不返回会话数据。POST 投递要求共享 secret：支持 `Authorization: Bearer <secret>`，或在 VoceChat 的 Webhook URL 配置 `https://桥接入口/vocehook?secret=<secret>`。反向代理可代为注入 Authorization，避免 URL 中保存密钥；配置代理访问日志时应隐藏 query。插件日志不记录 URL、请求体或凭据。后台验证成功只证明 GET 可达，还需发送测试消息确认 POST 的鉴权参数确实被保留。
 
 VoceChat 文档的 AES Webhook secret 是另一项协议，本插件当前接收明文 JSON，不支持 AES 密文，也没有把共享密钥假称平台签名。应关闭 VoceChat 的 AES 加密选项，并通过 HTTPS/受信任本地代理传输。使用强随机共享 secret。
 

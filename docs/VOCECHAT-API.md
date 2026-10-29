@@ -20,7 +20,7 @@
 
 ## Webhook 鉴权与加密
 
-官方文档没有通用的 HMAC 签名 header。文档描述的是可选 16 字节 secret 和 AES 加密，而不是请求签名。当前插件接收明文 JSON；在反向代理校验来源，并以显式 Webhook secret 校验地址/Authorization。不要把配置为 AES 密文的 VoceChat webhook 直接接入此 JSON 接收器，也不要把插件的共享 secret 当作 VoceChat 原生签名。
+官方文档没有通用的 HMAC 签名 header。文档描述的是可选 16 字节 secret 和 AES 加密，而不是请求签名。当前插件接收明文 JSON；精确路径的 GET 无需鉴权即返回 200，仅用于地址验证；POST 在反向代理校验来源，并以显式 Webhook secret 校验 query/Authorization。不要把配置为 AES 密文的 VoceChat webhook 直接接入此 JSON 接收器，也不要把插件的共享 secret 当作 VoceChat 原生签名。
 
 ## 传输安全与凭据
 

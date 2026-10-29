@@ -85,11 +85,13 @@ export class Bridge {
     const url=new URL(req.url || '/', 'http://localhost');
     const respond=(code:number,body:unknown)=>{res.writeHead(code,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(body));};
     if (url.pathname!==this.config.webhookPath) return respond(404,{error:'NOT_FOUND'});
+    // VoceChat validates the endpoint with GET. This probe exposes no data and
+    // must succeed independently of POST credentials or query preservation.
+    if(req.method==='GET') return respond(200,{ok:true});
     const secret=await this.ports.resolveCredential(this.config.webhookSecretRef);
     const provided=req.headers.authorization?.replace(/^Bearer /,'') || url.searchParams.get('secret') || '';
     const a=Buffer.from(secret||''),b=Buffer.from(provided);
     if (!a.length || a.length!==b.length || !timingSafeEqual(a,b)) return respond(401,{error:'UNAUTHORIZED'});
-    if(req.method==='GET') return respond(200,{ok:true});
     if(req.method!=='POST') return respond(405,{error:'METHOD_NOT_ALLOWED'});
     if (!req.headers['content-type']?.toLowerCase().startsWith('application/json')) return respond(415,{error:'JSON_REQUIRED'});
     const chunks:Buffer[]=[];let size=0;
