@@ -17,7 +17,7 @@
     groupSenderWhitelist: []
     autoReply: true
     allowProactive: false
-    allowedLocalRoots: [] # 按需填写允许外发文件的绝对目录
+    allowedLocalRoots: [] # DSH 工具默认使用宿主文件读取权限；填写目录时增加额外限制，支持 ~/
     allowedRemoteOrigins: [] # 按需填写允许下载媒体的完整 origin
     statePath: ''
     tempDir: ''

@@ -18,7 +18,7 @@ const descriptions: Record<string,string> = {
   userWhitelist:'允许私聊的 UID，空数组拒绝全部',groupWhitelist:'允许群聊的 GID，空数组拒绝全部',
   groupSenderWhitelist:'群内附加发送者 UID 限制，空数组允许已授权群内成员',
   targetSessionId:'固定 DSH Session ID',agentPreset:'恢复会话使用的可选 preset',
-  allowedLocalRoots:'Agent 允许发送的本地文件根目录；默认禁止',allowedRemoteOrigins:'允许发送的远程媒体来源；仍禁止私网地址',
+  allowedLocalRoots:'可选的额外本地媒体目录限制；留空使用 DSH 文件读取权限',allowedRemoteOrigins:'允许发送的远程媒体来源；仍禁止私网地址',
   voiceEnabled:'语音服务总开关；关闭后停止识别和合成调用，原始音频仍作为附件收发',
   asrEnabled:'启用入站语音转写',asrProvider:'识别厂家：OpenAI 标准接口或小米 MiMo',
   asrBaseUrl:'识别 API base；留空使用所选厂家官方地址',asrModel:'识别模型；留空按厂家使用默认模型',

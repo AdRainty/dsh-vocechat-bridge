@@ -57,7 +57,8 @@ VoceChat 文档的 `set/get secret` 接口控制可选的**消息内容加密**�
 | `userWhitelist`, `groupWhitelist`, `groupSenderWhitelist` | 数字 ID 数组；前两个默认拒绝，第三个是可选附加限制 |
 | `targetSessionId`, `agentPreset` | 固定已有会话；preset 留空时从持久会话恢复 |
 | `autoReply`, `allowProactive` | `true`, `false`；普通回复自动发送最终 step 文本；主动发送需要显式启用 |
-| `allowedLocalRoots`, `allowedRemoteOrigins` | 均 `[]`，默认禁止 Agent 出站本地/远程媒体；配置只允许需要的目录及精确 HTTP(S) origin |
+| `allowedLocalRoots` | `[]`，DSH 工具默认使用宿主文件读取权限；填写后额外限制在这些本地目录内，支持 `~/` |
+| `allowedRemoteOrigins` | `[]`，默认禁止远程媒体下载；按需配置精确 HTTP(S) origin |
 | `requestTimeoutMs`, `turnTimeoutMs` | `30000`, `180000`，分别控制 API 及实际提交后的会话轮次；等待共享 Session 空闲不消耗 turnTimeoutMs |
 | `maxMediaBytes`, `maxAudioSeconds` | `26214400`, `300`，检查实际字节及音频时长 |
 | `maxBodyBytes`, `maxTextChars` | `262144`, `16000`，拒绝过大入站，不静默截断 |
@@ -117,6 +118,10 @@ VoceChat 文档的 `set/get secret` 接口控制可选的**消息内容加密**�
 ```
 
 文字默认 `format: 'plain'`；发送原生 Markdown 时显式设置 `format: 'markdown'`，插件使用 `text/markdown`，无需添加引用消息。自动文本回复仍默认普通文本。长文本按 `textSegmentChars` 分段，复杂 Markdown 的代码块或表格宜由调用方按逻辑段发送，避免语法跨越多个消息气泡。
+
+本地图片、音频和文件使用与 DSH `read_file` / `read_image` 相同的文件系统服务：相对路径按执行工具的会话工作区解析，`~/` / `~\` 展开为用户主目录，也接受绝对路径。宿主允许读取的文件可以直接发送，无需再把工作区加入插件白名单。DSH 的只读、工作区可修改和完全权限模式对“修改文件”的限制不同；发送已有媒体只读取文件，不要求修改权限。
+
+设置页的“额外限制本地媒体目录”对应 `allowedLocalRoots`，默认留空；明确填写目录时，插件才追加 `realpath` 目录边界检查。宿主拒绝读取、文件不是普通文件或文件超限时仍会拒绝，读取失败不会改用 Node 文件读取绕过宿主。程序化调用 Bridge/Client 且未提供宿主文件读取能力时，仍需配置本地目录白名单。
 
 包含 `speech` 时先完成合成及音频校验，再依次发送文字、合成语音、数组中的附件；附件最多 20 项。平台不能在单个气泡中混放这些内容，所以会拆成多条相邻消息。成功工具发送抑制本轮重复自动回复。部分成功时错误带 `sent:true` 和已经确认的 `receipts`，不会自动重发已有片段。合成音频直接从受限的 Provider 字节发送，不需要开放临时目录给 `allowedLocalRoots`。
 

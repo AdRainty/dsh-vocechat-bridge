@@ -2,7 +2,7 @@
 
 连接 [DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness) 与 [VoceChat](https://voce.chat/) 的第三方插件。在 VoceChat 私聊或群聊中使用已有 DSH 会话，收发文字、图片、文件与语音，并保留该会话原有的人格、记忆和工具权限。
 
-**当前版本：0.4.4 · 许可证：Apache-2.0**
+**当前版本：0.4.5 · 许可证：Apache-2.0**
 
 - [GitHub](https://github.com/AdRainty/dsh-vocechat-bridge)
 - [GitLab](https://gitlab.adrainty.online/dsh-plugins/dsh-vocechat-bridge)
@@ -45,7 +45,7 @@ dsh plugin --profile web add "$PWD"
 
 源码仓库不保留 `dist/`；上述构建步骤会生成插件入口 `dist/index.js`。运行时所需的三个 `@deepseek-ai/*` peer dependency 由 DSH 宿主提供。
 
-也可以直接下载 [GitHub Releases](https://github.com/AdRainty/dsh-vocechat-bridge/releases) 中的插件 tgz。发布包内含 `dist/`、客户端入口、配置和许可文件，无需自行编译；可通过 DSH 插件安装器安装。维护者运行 `npm pack` 可生成相同结构的 `dsh-vocechat-bridge-0.4.4.tgz`。
+也可以直接下载 [GitHub Releases](https://github.com/AdRainty/dsh-vocechat-bridge/releases) 中的插件 tgz。发布包内含 `dist/`、客户端入口、配置和许可文件，无需自行编译；可通过 DSH 插件安装器安装。维护者运行 `npm pack` 可生成相同结构的 `dsh-vocechat-bridge-0.4.5.tgz`。
 
 链接安装更新代码后，需要重载**插件包**才能替换已加载模块；宿主启用 HMR 时也可能自动重载。“保存并重载后端”用于应用连接配置，不负责重新导入代码。详见[安装与运行](docs/USAGE.md)。
 
@@ -76,7 +76,7 @@ VoceChat 文档中的 `set/get secret` 是另一套**可选消息加密接口**�
 | `voce_quiet` | 安静结束当前 VoceChat 回合 |
 | `voce_bridge_status` | 查看生命周期、缓冲与入站诊断，不返回凭据或消息正文 |
 
-所有发送工具都要求显式 `destination: { kind: 'user' | 'group', id: 数字 }`，并检查目标白名单。主动发送需开启 `allowProactive`。本地文件和远程媒体还分别受目录、来源及网络访问规则限制。
+所有发送工具都要求显式 `destination: { kind: 'user' | 'group', id: 数字 }`，并检查目标白名单。主动发送需开启 `allowProactive`。本地媒体使用 DSH 的文件读取能力，相对路径按当前会话工作区解析，支持 `~/…`。设置页的 `allowedLocalRoots` 留空即可跟随宿主读取权限；填写目录时增加额外限制。远程媒体仍受来源及网络访问规则限制。
 
 普通自动回复在 DSH 回合完成后发送最终文本；成功使用发送工具后会抑制重复自动回复。已核实的记忆召回、时间快照和模型切换通知属于内部上下文，不会被当成其他渠道输入。
 
@@ -111,7 +111,7 @@ SSE 是可行的另一条入站路径：Bot 的用户登录 Token 可以订阅�
 - 默认基址、Bot UID、Session 为空或未配置值；未配置完整时无法启动。
 - Key 保存在 DSH credentials 或进程环境中；源码中的 `*_API_KEY` 是引用名。
 - 设置页不回传已有 Key，日志及入站诊断不输出凭据或消息正文。
-- 本地媒体只允许配置的目录，远程媒体默认拒绝；下载禁止重定向并检查地址和大小。
+- 本地媒体通过 DSH 文件系统读取，可额外限制目录；远程媒体默认拒绝，下载禁止重定向并检查地址和大小。
 - 历史内容作为外部背景传入，不作为新的用户请求执行。
 
 不要提交真实 `.env`、凭据库、部署配置、会话日志、媒体或运行状态。变更部署前保留配置备份，并确保同一 Bot 的相同事件只有一个有效处理入口。

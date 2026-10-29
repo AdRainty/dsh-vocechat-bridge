@@ -1,6 +1,7 @@
 import type { Bridge } from './bridge.ts';
 import type { Destination, OutboundMessage, OutgoingAttachment } from './types.ts';
 import type { DshSessionPort, HostAgent } from './dsh.ts';
+import { sessionLocalFiles } from './files.ts';
 
 type Execution = { agent?: HostAgent; signal?: AbortSignal; concludeTurn?(): void };
 type DefineTool = (options: any) => any;
@@ -10,7 +11,7 @@ const destinationSpec = { type: 'object', required: true, additionalProperties: 
 } };
 const mediaProperties = {
   kind: { type: 'string', required: true, enum: ['image', 'audio', 'file'] },
-  path: { type: 'string', description: 'Local file inside configured allowedLocalRoots.' },
+  path: { type: 'string', description: 'File readable by DSH. Relative paths use this session workspace; ~/ uses the home directory. An explicitly configured allowedLocalRoots list adds a restriction.' },
   url: { type: 'string', description: 'Remote file from configured allowedRemoteOrigins.' },
   name: { type: 'string' }, mime: { type: 'string' },
 };
@@ -31,14 +32,15 @@ function media(value: any): OutgoingAttachment {
 }
 
 /** Register DSH tools using the actual host defineTool compiler (injected by entry). */
-export function registerVoceTools(ctx: { tools: { register(tool: any): any } }, bridge: Pick<Bridge, 'send'|'getHistory'> & {status():unknown},
+export function registerVoceTools(ctx: { tools: { register(tool: any): any }; get?(name:string):any }, bridge: Pick<Bridge, 'send'|'getHistory'> & {status():unknown},
   session: Pick<DshSessionPort,'assertToolSession'|'outboundMode'|'noteSent'|'quiet'>, defineTool: DefineTool) {
   const output = { schema: { type: 'string' }, render: (_args: any, value: string) => [{ type: 'text', text: value }] };
   const send = async (args: any, exec: Execution, message: OutboundMessage) => {
     const to = destination(args.destination);
     const { proactive } = session.outboundMode(exec?.agent, to);
     let receipt;
-    try { receipt = await bridge.send(to, message, { proactive, signal: exec?.signal }); }
+    try { receipt = await bridge.send(to, message, { proactive, signal: exec?.signal,
+      localFiles:message.attachments?.some(attachment=>attachment.path)?sessionLocalFiles(ctx,exec?.agent):undefined }); }
     catch (error: any) {
       if (error?.sent === true) session.noteSent(exec?.agent, to);
       throw error;

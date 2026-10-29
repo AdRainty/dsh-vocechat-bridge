@@ -10,6 +10,7 @@ import { VoceChatClient } from './vocechat.ts';
 import { AudioError, probeAudio } from './audio.ts';
 import { createAsrProvider, createTtsProvider, speechOptions } from './speech.ts';
 import { boundHistory } from './history.ts';
+import type { LocalFileResolver } from './files.ts';
 import type { ConversationHistory, Destination, HistoryMessage, OutboundMessage, PreparedMessage, SessionPort, CredentialResolver, Logger } from './types.ts';
 
 const silent: Logger = {debug(){},info(){},warn(){},error(){}};
@@ -325,7 +326,7 @@ export class Bridge {
     const recent=await this.client.getHistory(destination,this.config.botUid,100,AbortSignal.any([signal,AbortSignal.timeout(this.config.historyTimeoutMs)]));
     if(!recent.some(message=>message.id===String(replyTo)))throw new Error('REPLY_TARGET_UNVERIFIED');
   }
-  send(destination:Destination,message:OutboundMessage,options:{proactive?:boolean;replyTo?:number;signal?:AbortSignal}={}) {
+  send(destination:Destination,message:OutboundMessage,options:{proactive?:boolean;replyTo?:number;signal?:AbortSignal;localFiles?:LocalFileResolver}={}) {
     const perform=async()=>{
       if(!this.running)throw new Error('BRIDGE_STOPPED');
       if(!allowedDestination(this.config,destination))throw new Error('DESTINATION_DENIED');
@@ -357,7 +358,7 @@ export class Bridge {
         {replyTo:receipts.length?undefined:replyTo,signal}));
       for(const a of message.attachments||[]) {
         signal.throwIfAborted();
-        receipts.push(await this.client.sendAttachment(destination,a,{replyTo:receipts.length?undefined:replyTo,signal,
+        receipts.push(await this.client.sendAttachment(destination,a,{replyTo:receipts.length?undefined:replyTo,signal,localFiles:options.localFiles,
           validate:a.kind==='audio'?async(bytes,name,mime)=>{
             const dir=join(this.config.tempDir,`job-${randomUUID()}`);this.activeTempDirs.add(dir);await mkdir(dir,{recursive:true,mode:0o700});
             try{const file=join(dir,'outgoing.media');await writeFile(file,bytes,{mode:0o600});await probeAudio({path:file,name,mime},{maxBytes:this.config.maxMediaBytes,maxDurationSeconds:this.config.maxAudioSeconds,timeoutMs:this.config.requestTimeoutMs,ffmpegPath:this.config.ffmpegPath,ffprobePath:this.config.ffprobePath,tempDir:dir},signal);}

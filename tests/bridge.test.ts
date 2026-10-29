@@ -9,6 +9,7 @@ import { Bridge } from '../src/bridge.ts';
 import { parseConfig, allowedDestination } from '../src/config.ts';
 import { normalizeWebhook } from '../src/inbound.ts';
 import { StateStore } from '../src/state.ts';
+import { registerVoceTools } from '../src/tools.ts';
 import type { BridgeConfig } from '../src/config.ts';
 import type { PreparedMessage, SessionPort } from '../src/types.ts';
 
@@ -161,6 +162,26 @@ test('partial combined send returns delivered receipts and does not hide partial
   const {bridge,sent}=await setup(t);
   await assert.rejects(bridge.send({kind:'user',id:10},{text:'already sent',attachments:[{kind:'image',path:'missing'}]}),(error:any)=>error.message==='PARTIAL_SEND_FAILED' && error.sent===true && error.receipts.length===1);
   assert.equal(sent.length,1);
+});
+
+test('media tools use the session fs and workspace with empty roots; provider denials and explicit restrictions still apply',async t=>{
+  const f=await setup(t),agent:any={id:'session-test'};
+  const filename=join(f.dir,'sticker.gif');await writeFile(filename,'GIF89a');
+  const tools=new Map<string,any>();let reads=0,denied=false,tooLarge=false;
+  const provider={
+    async resolve(value:string,options:any){assert.equal(options.cwd,f.dir);assert.equal(value,'sticker.gif');return {displayPath:filename,targetKey:filename};},
+    async stat(){return {type:'file',size:tooLarge?f.bridge.config.maxMediaBytes+1:6};},
+    async readBytes(target:any,_signal:any,limit:number){assert.equal(limit,f.bridge.config.maxMediaBytes);reads++;if(denied)throw Object.assign(new Error('private host detail'),{code:'FS_SANDBOX_DENIED'});return readFile(target.displayPath);},
+  };
+  registerVoceTools({tools:{register(tool:any){tools.set(tool.name,tool);}},get(name){return name==='fs'?provider:name==='workingDirectory'?{async ensure(a:any){assert.equal(a,agent);return f.dir;}}:undefined;}},f.bridge,
+    {outboundMode(a){assert.equal(a,agent);return {proactive:false};},noteSent(){},quiet(){},assertToolSession(){}},value=>value);
+  const send=()=>tools.get('voce_send_image').execute({destination:{kind:'user',id:10},path:'sticker.gif'},{agent});
+  assert.deepEqual(f.bridge.config.allowedLocalRoots,[]);
+  await send();assert.equal(reads,1);assert.equal(f.sent.length,1);assert.equal(f.sent[0].type,'vocechat/file');
+  denied=true;await assert.rejects(send(),/LOCAL_MEDIA_READ_DENIED/);assert.equal(f.sent.length,1);
+  denied=false;tooLarge=true;await assert.rejects(send(),/MEDIA_TOO_LARGE/);assert.equal(reads,2);
+  tooLarge=false;f.bridge.client.options.allowedLocalRoots=[join(f.dir,'other')];
+  await assert.rejects(send(),/LOCAL_MEDIA_PATH_DENIED/);assert.equal(reads,2);assert.equal(f.sent.length,1);
 });
 
 test('native reply verifies conversation ownership and quotes only the first text or media without placeholder messages',async t=>{

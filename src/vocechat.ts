@@ -3,6 +3,8 @@ import path from 'node:path';
 import type { Destination, IncomingMessage, OutgoingAttachment } from './types.ts';
 import { normalizeWebhook } from './inbound.ts';
 import { boundedResponse, downloadPublicUrl, validateHttpUrl } from './network.ts';
+import { expandHomePath } from './files.ts';
+import type { LocalFileResolver } from './files.ts';
 
 const MIME: Record<string, string> = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif',
@@ -24,6 +26,7 @@ export interface SendOptions {
   format?: 'plain' | 'markdown';
   signal?: AbortSignal;
   validate?: (bytes: Buffer, name: string, mime: string) => Promise<void>;
+  localFiles?: LocalFileResolver;
 }
 export interface UploadedFile { path: string; size: number; hash?: string; width?: number; height?: number }
 export interface SendResult { messageId: number; remotePath?: string; size?: number; audioFallback?: boolean }
@@ -157,7 +160,7 @@ export class VoceChatClient {
     return { ...result, name: cleanName(name) };
   }
 
-  async loadSource(source: OutgoingAttachment, signal?: AbortSignal): Promise<{ bytes: Buffer; name: string; contentType: string }> {
+  async loadSource(source: OutgoingAttachment, signal?: AbortSignal, localFiles?: LocalFileResolver): Promise<{ bytes: Buffer; name: string; contentType: string }> {
     if (!!source.path === !!source.url) throw new Error('MEDIA_REQUIRES_ONE_SOURCE');
     if (source.url) {
       const url = validateHttpUrl(source.url);
@@ -167,6 +170,15 @@ export class VoceChatClient {
       if (!result.bytes.length) throw new Error('EMPTY_MEDIA');
       const name = cleanName(source.name ?? url.pathname.split('/').pop() ?? 'attachment');
       return { ...result, name, contentType: source.mime ?? result.contentType };
+    }
+    if (localFiles) {
+      const file = await localFiles(source.path!, signal);
+      if (this.options.allowedLocalRoots?.length) await this.validateLocalPath(file.path);
+      const bytes = Buffer.from(await file.read(this.maxMediaBytes, signal));
+      if (!bytes.length) throw new Error('EMPTY_MEDIA');
+      if (bytes.length > this.maxMediaBytes) throw new Error('MEDIA_TOO_LARGE');
+      const name = cleanName(source.name ?? path.basename(file.path));
+      return { bytes, name, contentType: source.mime ?? mimeOf(name) };
     }
     const filename = await this.validateLocalPath(source.path!);
     const file = await open(filename, 'r');
@@ -189,8 +201,8 @@ export class VoceChatClient {
   }
 
   async validateLocalPath(value: string): Promise<string> {
-    const filename = await realpath(value).catch(() => { throw new Error('LOCAL_MEDIA_NOT_FOUND'); });
-    const roots = await Promise.all((this.options.allowedLocalRoots ?? []).map(root => realpath(root).catch(() => '')));
+    const filename = await realpath(expandHomePath(value)).catch(() => { throw new Error('LOCAL_MEDIA_NOT_FOUND'); });
+    const roots = await Promise.all((this.options.allowedLocalRoots ?? []).map(root => realpath(expandHomePath(root)).catch(() => '')));
     const allowed = roots.some(root => {
       if (!root) return false;
       const relative = path.relative(root, filename);
@@ -204,7 +216,7 @@ export class VoceChatClient {
     // Validate target before doing I/O, even when caller bypasses the bridge.
     this.endpoint(destination, options.replyTo);
     if (!['image', 'audio', 'file'].includes(source.kind)) throw new Error('INVALID_ATTACHMENT_KIND');
-    const media = await this.loadSource(source, options.signal);
+    const media = await this.loadSource(source, options.signal, options.localFiles);
     return this.sendMedia(destination,source.kind,media,options);
   }
 

@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import { expandHomePath } from './files.ts';
 import { join, resolve } from 'node:path';
 import type { AudioFormat } from './audio.ts';
 
@@ -81,7 +82,7 @@ export function parseConfig(input: Partial<BridgeConfig> = {}): BridgeConfig {
     if (!['https:','http:'].includes(u.protocol) || u.username || u.password || u.pathname !== '/' || u.search || u.hash) throw new Error('Invalid remote origin');
     return u.origin;
   });
-  c.allowedLocalRoots = c.allowedLocalRoots.map(x => resolve(x));
+  c.allowedLocalRoots = c.allowedLocalRoots.map(x => resolve(expandHomePath(x)));
   const home = process.env.DSH_HOME || join(homedir(), '.dsh');
   c.statePath = resolve(c.statePath || join(home, 'vocechat-bridge', 'state.json'));
   c.tempDir = resolve(c.tempDir || join(home, 'vocechat-bridge', 'tmp'));
