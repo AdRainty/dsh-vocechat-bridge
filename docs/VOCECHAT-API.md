@@ -10,17 +10,25 @@
 - [message.rs](https://github.com/Privoce/vocechat-server-rust/blob/master/src/api/message.rs) 的 `parse_properties_from_base64`：`X-Properties` 是 **Base64 编码的 UTF-8 JSON**，不能照搬旧桥接的原始 JSON header。中文名正常编码，无需损坏字符串或重试重复发消息。
 - `resource.rs` 的 `download_file`：下载路径固定 `/api/resource/file?file_path=年/月/日/UUID`；路径来自文件消息 `detail.content`，不是任意 URL。服务端也按附件元数据确定 MIME。插件仅接受资源 ID，禁止 URL、盘符、路径穿越与额外查询参数。
 
+## 历史查询与部署版本差异
+
+在实际部署的 **VoceChat 0.5.38** 上只读核对 `/api/spec` 并成功调用：`GET /api/bot/user/{uid}/messages?context=N` 和 `GET /api/bot/group/{gid}/messages?context=N`，均使用 `x-api-key`，返回 `ChatMessage[]`，含 Bot 自己和其他 Bot 的消息。`context` 是条数；群接口另有可选 `user_id`，本插件不传，以取得同群完整背景。插件工具限制 N 为 1–100，响应限制 2 MiB，归一化后按消息 ID 从旧到新返回，并再次核对会话归属。
+
+不要把这两个 Bot 接口写成 `/api/user/{uid}/history?limit=N` 或 `/api/group/{gid}/history?limit=N`：后两者需要普通用户 Token，Bot Key 不等于用户登录 Token。当前 Bot 历史端点没有 `before` 参数；自动背景检查最新 100 条并筛选早于当前批次的消息。旧部署不支持时返回安全错误码，新消息仍正常提交，不尝试读取管理员凭据或登录态。
+
+公开 Rust master 源码并不覆盖该部署的全部新增能力。0.5.38 OpenAPI 还列出 `POST /api/bot/reply/{mid}`；当前 `replyTo` 仍保持既有的可见引用行为，尚未切换该新增端点。Bot 历史可见性与 Webhook 投递是两条链路，不能用“能查到”推断“已经 POST 到插件”；本地入站诊断只记录 ID、结果及忽略原因。
+
 ## 音频兼容
 
 工作区 `vocechat-bridge/vocechat-media.mjs` 记录实际部署支持 `vocechat/audio`，手机显示语音条；本次真实私聊也已上传并以该类型发送 M4A，用户确认可播放，未发生降级。公开官方文档和当前可访问 Rust 源码未列出此类型，服务器版本可能存在差异。因此插件默认尝试 `vocechat/audio`；只在明确收到 HTTP 415（媒体类型不支持）时降级为 `vocechat/file` 音频附件，并返回 `audioFallback: true`。鉴权失败、超时或一般服务错误不重试发送，避免重复消息。
 
 ## 指定消息回复的限制
 
-官方 Bot API 的发送函数创建的是 `normal` 消息，没有使用 Bot Key 发送原生 `reply` 的文档化端点。公开 `/api/message/reply/{mid}` 属于用户 Token 接口，不能假设 Bot Key 有相同权限。插件 `replyTo` 文本使用 `> 回复消息 #MID` 的 Markdown 可见引用，提供逻辑关联；不是原生可点击引用气泡。组合消息的关联由桥接层首条文字承担。需要原生引用时应先确认部署服务器 OpenAPI 是否新增 Bot 专用能力，再扩展传输实现。
+公开 Rust master 中的 Bot 发送函数创建 `normal` 消息；普通用户 Token 的回复接口不能直接假设可用 Bot Key。实际 0.5.38 已提供专用 Bot reply 端点，见上文，但本插件的 `replyTo` 仍使用 `> 回复消息 #MID` 的 Markdown 可见引用，提供逻辑关联；不是原生可点击引用气泡。组合消息的关联由桥接层首条文字承担。
 
 ## Webhook 鉴权与加密
 
-官方文档没有通用的 HMAC 签名 header。文档描述的是可选 16 字节 secret 和 AES 加密，而不是请求签名。当前插件接收明文 JSON；精确路径的 GET 无需鉴权即返回 200，仅用于地址验证；POST 在反向代理校验来源，并以显式 Webhook secret 校验 query/Authorization。不要把配置为 AES 密文的 VoceChat webhook 直接接入此 JSON 接收器，也不要把插件的共享 secret 当作 VoceChat 原生签名。
+官方文档没有通用的 HMAC 签名 header。文档描述的是可选 16 字节 secret 和 AES 加密，而不是请求签名。当前插件接收明文 JSON；精确路径的 GET 无需鉴权即返回 200，仅用于地址验证；POST 默认不要求 Secret，仅在显式设置 `webhookSecretRef` 后校验 query/Authorization。VoceChat 的 AES Secret 留空即可推送明文；不要把 AES 密文直接接入此 JSON 接收器，也不要把插件的可选访问令牌当作 VoceChat 原生签名。
 
 ## 传输安全与凭据
 

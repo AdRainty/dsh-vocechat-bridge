@@ -82,6 +82,10 @@ export class BridgeRuntime {
     if(!this.active)return Promise.reject(new Error('BRIDGE_STOPPED'));
     return this.active.bridge.send(destination,message,options);
   }
+  getHistory(destination:Destination,limit=20,options:Parameters<Bridge['getHistory']>[2]={}) {
+    if(!this.active)return Promise.reject(new Error('BRIDGE_STOPPED'));
+    return this.active.bridge.getHistory(destination,limit,options);
+  }
   readonly session = {
     outboundMode:(agent:HostAgent|undefined,destination:Destination)=>{
       if(!this.active)throw new Error('BRIDGE_STOPPED');return this.active.session.outboundMode(agent,destination);

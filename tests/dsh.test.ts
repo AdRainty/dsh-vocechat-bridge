@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { DshSessionPort, type HostAgent } from '../src/dsh.ts';
 import { registerVoceTools } from '../src/tools.ts';
 import type { PreparedMessage } from '../src/types.ts';
+import { boundHistory } from '../src/history.ts';
 
 const signal = () => new AbortController().signal;
 const incoming = (text = 'hello'): PreparedMessage => ({ id: '42', senderId: 7, destination: { kind: 'user', id: 7 }, timestamp: 123, text, attachments: [] });
@@ -259,7 +260,7 @@ test('tool send requires explicit destination and active host execution identity
   const f = fixture(); const sends: any[] = [];
   const bridge: any = { async send(...args: any[]) { sends.push(args); return [123]; }, status: () => ({ running: true }) };
   registerVoceTools(f.ctx, bridge, f.session, value => value);
-  assert.equal(f.tools.size, 8);
+  assert.equal(f.tools.size, 10);
   const tool = f.tools.get('voce_send_text');
   await assert.rejects(tool.execute({ text: 'hello' }, { agent: f.agent }), /INVALID_DESTINATION/);
   await assert.rejects(tool.execute({ destination: { kind: 'user', id: 7 }, text: 'hello' }, {}), /TOOL_SESSION_DENIED/);
@@ -271,6 +272,22 @@ test('tool send requires explicit destination and active host execution identity
   });
   assert.equal((await f.session.run([incoming()], signal())).sent, true);
   assert.equal(sends[1][2].proactive, false);
+});
+
+test('history remains background in one user message and read tools do not suppress its reply',async()=>{
+  const f=fixture();const reads:any[]=[];
+  const old={...incoming('old text '.repeat(3000)),id:'40',senderId:8};
+  const history=boundHistory({kind:'user',id:7},[old],1,2000);
+  assert.equal(history.truncated,true);assert.ok(JSON.stringify(history).length<=2000);assert.equal(history.messages[0].id,'40');
+  registerVoceTools(f.ctx,{send:async()=>[],getHistory:async(...args:any[])=>{reads.push(args);return history;},status:()=>({})},f.session,value=>value);
+  const read=f.tools.get('voce_get_private_history'),group=f.tools.get('voce_get_group_history');
+  await assert.rejects(read.execute({uid:7,limit:3},{}),/TOOL_SESSION_DENIED/);
+  await group.execute({gid:20,limit:5},{agent:f.agent});assert.deepEqual(reads[0].slice(0,2),[{kind:'group',id:20},5]);
+  f.setFollowup(m=>{f.start(m);void read.execute({uid:7,limit:3},{agent:f.agent}).then(()=>f.answer('current reply'));});
+  const result=await f.session.run([incoming('current text')],signal(),{async beforeSubmit(){},history});
+  assert.equal(result.sent,false);assert.equal(result.text,'current reply');assert.equal(f.queued.length,1);
+  assert.match(f.queued[0].content[0].text,/仅作背景/);assert.equal(f.queued[0].content[1].text,'current text');
+  assert.deepEqual(f.queued[0].source.messages.map((m:any)=>m.id),['42']);assert.deepEqual(f.queued[0].source.history.ids,['40']);
 });
 
 test('failed tool send does not suppress the ordinary automatic answer', async () => {

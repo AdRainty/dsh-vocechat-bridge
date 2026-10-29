@@ -121,6 +121,11 @@ export class BridgeRuntime {
             return Promise.reject(new Error('BRIDGE_STOPPED'));
         return this.active.bridge.send(destination, message, options);
     }
+    getHistory(destination, limit = 20, options = {}) {
+        if (!this.active)
+            return Promise.reject(new Error('BRIDGE_STOPPED'));
+        return this.active.bridge.getHistory(destination, limit, options);
+    }
     session = {
         outboundMode: (agent, destination) => {
             if (!this.active)

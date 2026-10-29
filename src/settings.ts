@@ -9,7 +9,7 @@ import type { CredentialResolver } from './types.ts';
 export const settingsPath = '/api/vocechat-bridge/settings';
 export const connectionFields = ['enabled','baseUrl','botUid','botApiKeyRef','webhookSecretRef','webhookHost','webhookPort','webhookPath',
   'userWhitelist','groupWhitelist','groupSenderWhitelist','targetSessionId','agentPreset','autoReply','allowProactive',
-  'privateQuietMs','groupQuietMs','maxWaitMs','maxBatch','allowedLocalRoots','allowedRemoteOrigins'] as const;
+  'privateQuietMs','groupQuietMs','maxWaitMs','maxBatch','historyContextMessages','historyMaxChars','historyTimeoutMs','allowedLocalRoots','allowedRemoteOrigins'] as const;
 export const editableFields = [...connectionFields,...speechFields,'ffmpegPath','ffprobePath','maxAudioSeconds','maxMediaBytes'] as const;
 type EditableKey = typeof editableFields[number];
 const known = new Set<string>(editableFields);

@@ -14,7 +14,7 @@ npm pack
 dsh plugin --profile web add "K:\Code\Tools\dsh-plugins\dsh-vocechat-bridge"
 ```
 
-也可以把 `dsh-vocechat-bridge-0.3.1.tgz` 交给 DSH 插件安装器。链接安装更新后，在插件页关闭再打开该插件一次，并刷新界面加载新的 client；不必重启整个 DSH。开发链接安装时，宿主依赖必须能从插件的真实路径解析；遵循宿主安装器解析 peer dependencies 的方式，若手工建立依赖链接，指向实际 profile 的 `node_modules/@deepseek-ai`，不要复制凭据文件。
+也可以把 `dsh-vocechat-bridge-0.4.0.tgz` 交给 DSH 插件安装器。链接安装更新代码后，在插件页关闭再打开该插件一次，并刷新界面加载新的 client；不必重启整个 DSH。“保存并重载后端”应用当前已加载版本的连接配置，不会替换内存中的插件代码。开发链接安装时，宿主依赖必须能从插件的真实路径解析；遵循宿主安装器解析 peer dependencies 的方式，若手工建立依赖链接，指向实际 profile 的 `node_modules/@deepseek-ai`，不要复制凭据文件。
 
 本次交付没有执行上述安装命令，也没有变更已运行的 profile。`npm ci --legacy-peer-deps` 用于独立开发和测试；运行插件时三个 peer dependency 由 DSH 提供。
 
@@ -54,6 +54,8 @@ VoceChat 后台的 **16 字节 Secret 是可选的消息加密设置**，留空�
 | `textSegmentChars` | `2000`，按 Unicode code point 分段发长文本 |
 | `privateQuietMs`, `groupQuietMs` | `4000`, `1500`；私聊/群聊静默防抖，新消息重置本缓冲区计时 |
 | `maxWaitMs`, `maxBatch` | `12000`, `10`；从批次首条消息起最长等待 12 秒；达到条数上限也会提前封批 |
+| `historyContextMessages` | `6`；每批附带的同会话历史条数，`0` 关闭，最大 `50` |
+| `historyMaxChars`, `historyTimeoutMs` | `12000`, `5000`；历史结果的 JSON 字符预算和查询超时；超限保留较新的记录，失败不阻止当前新消息 |
 | `mergeWindowMs` | 旧配置兼容项，默认 `0` 停用；非零时覆盖两类静默时长，升级后建议删除此旧字段 |
 | `maxQueue`, `maxHistory` | `200`, `5000`；队列满返回 503；完成记录及去重窗口受历史条数上限限制 |
 | `statePath`, `tempDir` | 默认 `$DSH_HOME/vocechat-bridge/state.json` 与 `tmp`；没有 DSH_HOME 则用用户 `.dsh` |
@@ -84,7 +86,11 @@ VoceChat 后台的 **16 字节 Secret 是可选的消息加密设置**，留空�
 | `voce_send_file` | 同上，普通文件 |
 | `voce_send_message` | `destination`, 可选 `text`, `format`, `speech`, `attachments`, `replyTo`；speech 包含 text，可选 voice/instructions |
 | `voce_quiet` | 无参数，在当前 VoceChat 轮安静结束 |
-| `voce_bridge_status` | 无参数，只返回生命周期、Session ID、队列数量和服务地址，不含凭据与消息正文 |
+| `voce_get_private_history` | `uid`，可选 `limit`（默认 20，范围 1–100），查询 Bot 与该 UID 的近期私聊 |
+| `voce_get_group_history` | `gid`，可选 `limit`（默认 20，范围 1–100），查询该群近期消息 |
+| `voce_bridge_status` | 无参数，返回生命周期、Session ID、队列数量、历史查询状态和仅含 ID/结果的入站诊断，不含凭据与消息正文 |
+
+两个历史工具只读，由固定 Session 的真实 Agent 身份调用，沿用私聊/群聊白名单及可选群发送者限制，不受主动发送开关影响，也不会抑制本轮自动回复。结果按旧到新排序，保留消息 ID、发送者 UID、时间、正文、附件描述及本地已有的语音转写；不重新下载历史附件或调用 ASR。`truncated:true` 表示字符预算缩短了结果。
 
 组合消息例子：
 
@@ -105,6 +111,16 @@ VoceChat 后台的 **16 字节 Secret 是可选的消息加密设置**，留空�
 包含 `speech` 时先完成合成及音频校验，再依次发送文字、合成语音、数组中的附件；附件最多 20 项。平台不能在单个气泡中混放这些内容，所以会拆成多条相邻消息。成功工具发送抑制本轮重复自动回复。部分成功时错误带 `sent:true` 和已经确认的 `receipts`，不会自动重发已有片段。合成音频直接从受限的 Provider 字节发送，不需要开放临时目录给 `allowedLocalRoots`。
 
 `replyTo` 使用 Bot API 可实现的可见 Markdown 消息 ID 引用，不是原生引用气泡。仅附件回复时先发引用文字，再发附件。音频优先 `vocechat/audio`，明确 HTTP 415 时以普通音频文件降级，并返回 `audioFallback:true`。
+
+## 附带历史与入站诊断
+
+每批新消息完成防抖后，通过 Bot Key 查询同一私聊或群聊的历史，默认取 6 条，只附加到本次唯一的用户消息中作为背景。其他发送者及其他 Bot 的历史可以作为同群背景，但仍不与新消息合并为同一发送者，也不加入待回复队列。自身以前的回复也会保留。结构化来源中的 `messages` 只包含本批新消息 ID，`history.ids` 单独列出背景 ID。
+
+自动背景排除本批第一条 ID 及之后的全部消息，避免忙碌排队时把尚未提交的消息提前当成背景。当前 Bot API 只有最新窗口，没有 `before` 游标；自动查询最多检查最新 100 条，再筛选早于本批的记录，超出该窗口时可能少于配置条数。私聊双方严格匹配 Bot/目标 UID，群聊严格匹配 GID，不跨会话；配置群发送者白名单后，历史也按该名单过滤，并保留 Bot 自己的回复。历史超时、旧服务没有该接口或请求失败时，本次新消息照常提交，背景与状态附安全错误码。
+
+“设置 → VoceChat”可修改历史条数、字符预算和查询超时，保存并重载后端生效。页面还显示本次启动的 Webhook POST 次数、最近 HTTP 状态，以及最多 30 条已解析载荷的 ID、发送者和处理结果。`SELF_MESSAGE` 是自己的消息，`DESTINATION_DENIED` 是目标不在白名单，`SENDER_DENIED` 是群发送者受限，`OTHER_RECIPIENT` 是其他私聊收件人，`UNSUPPORTED_MESSAGE` 是非新消息/不支持的内容类型；正文和密钥不会进入该诊断。诊断随实例重启清空。
+
+排查 Bot 互相漏收时，先核对服务器历史是否存在，再对照入站诊断。插件只按自身 UID 忽略自消息，不按 `is_bot` 屏蔽其他 Bot；历史存在并不等于 VoceChat 已推送该消息。若新测试时 POST 计数没有变化，应检查服务端 Webhook 投递及代理；若有 ID 和忽略原因，则按对应规则排查。历史查询只补充背景，不自动轮询补投或触发 Bot 互相回复。
 
 ## 持久化与异常恢复
 

@@ -22,6 +22,7 @@ async function setup(t:any, overrides:Partial<BridgeConfig>={}, run?:SessionPort
   let asrFail=false;
   let asrRequests=0;
   let holdSends=false;
+  let history:any[]=[],historyFailure=false,historyRequests=0;
   const api=createServer(async(req,res)=>{
     const chunks:Buffer[]=[];for await(const c of req)chunks.push(c);const body=Buffer.concat(chunks);
     if(req.url?.startsWith('/api/resource/file')){const image=req.url.includes('test_image'),file=req.url.includes('test_file');res.writeHead(200,{'content-type':image?'image/png':file?'application/pdf':'audio/wav'});res.end(image?Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII=','base64'):file?Buffer.from('%PDF-1.4 test'):wav());return;}
@@ -31,6 +32,7 @@ async function setup(t:any, overrides:Partial<BridgeConfig>={}, run?:SessionPort
       const start=body.indexOf('\r\n\r\n',body.indexOf('name="chunk_data"'))+4;const end=body.indexOf('\r\n--',start);
       res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({path:'2026/10/29/uploaded',size:end-start}));return;
     }
+    if(req.url?.match(/^\/api\/bot\/(user|group)\/\d+\/messages\?/)){historyRequests++;res.writeHead(historyFailure?503:200,{'content-type':'application/json'});res.end(historyFailure?'private-provider-data':JSON.stringify(history));return;}
     sent.push({url:req.url||'',text:body.toString(),type:String(req.headers['content-type'])});
     if(holdSends)return;
     res.writeHead(200,{'content-type':'application/json'});res.end('123');
@@ -42,8 +44,31 @@ async function setup(t:any, overrides:Partial<BridgeConfig>={}, run?:SessionPort
   await bridge.start();
   t.after(async()=>{await bridge.stop();await new Promise<void>(r=>api.close(()=>r()));await rm(dir,{recursive:true,force:true});});
   const url=`http://127.0.0.1:${(bridge.status().address as any).port}/vocehook`;
-  return {bridge,calls,sent,url,dir,base,failAsr:()=>{asrFail=true;},asrRequests:()=>asrRequests,holdSends:()=>{holdSends=true;}};
+  return {bridge,calls,sent,url,dir,base,failAsr:()=>{asrFail=true;},asrRequests:()=>asrRequests,holdSends:()=>{holdSends=true;},
+    setHistory:(value:any[])=>{history=value;},failHistory:()=>{historyFailure=true;},historyRequests:()=>historyRequests};
 }
+
+test('background history excludes current/future records, reuses ASR, denies other destinations and tolerates outages',async t=>{
+  const histories:any[]=[];
+  const f=await setup(t,{historyContextMessages:2},async(_m,_s,options)=>{histories.push(options?.history);return {quiet:true};});
+  const audio:any=event(2,10,20);audio.detail={type:'normal',content_type:'vocechat/audio',content:'2026/10/29/previous',properties:{content_type:'audio/mp4',name:'previous.m4a'}};
+  const normalized=normalizeWebhook(audio)!;
+  f.bridge.store.jobs.push({id:'previous-job',message:normalized,acceptedAt:Date.now(),finishedAt:Date.now(),status:'done',
+    sourceKey:JSON.stringify([f.base,2]),preparedAudio:{0:{transcript:'previous transcript'}}});
+  f.setHistory([event(1,2,20,'my earlier reply'),audio,event(3,10,99,'wrong group'),event(10,10,20,'current'),event(11,10,20,'future')]);
+  await f.bridge.accept(event(10,10,20,'current'));await waitFor(()=>f.bridge.status().counts.done===2);
+  assert.deepEqual(histories[0].messages.map((m:any)=>m.id),['1','2']);
+  assert.equal(histories[0].messages[1].attachments[0].transcript,'previous transcript');assert.equal(f.asrRequests(),0);
+  assert.equal(f.bridge.store.jobs.filter(j=>j.message.id==='1').length,0);assert.equal(f.sent.length,0);
+  await assert.rejects(f.bridge.getHistory({kind:'group',id:99}),/DESTINATION_DENIED/);assert.equal(f.historyRequests(),1);
+  f.failHistory();await f.bridge.accept(event(12,10,20,'still deliver'));await waitFor(()=>f.bridge.status().counts.done===3);
+  assert.equal(histories[1].error,'VOCECHAT_HTTP_503');assert.equal(histories[1].messages.length,0);
+  assert.equal(JSON.stringify(f.bridge.status()).includes('private-provider-data'),false);
+  await f.bridge.accept(event(13,2,20,'self body must stay private'));
+  await f.bridge.accept(event(14,10,99,'denied body must stay private'));
+  assert.deepEqual(f.bridge.status().ingress.recent.slice(-2).map(e=>e.reason),['SELF_MESSAGE','DESTINATION_DENIED']);
+  assert.doesNotMatch(JSON.stringify(f.bridge.status().ingress),/body must stay private|test-secret/);
+});
 
 test('configuration fails closed and rejects malformed values',()=>{
   const c=parseConfig();assert.equal(c.enabled,false);assert.equal(allowedDestination(c,{kind:'user',id:1}),false);

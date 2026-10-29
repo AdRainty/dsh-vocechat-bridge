@@ -9,7 +9,8 @@ import { DebounceBuffer } from './debounce.ts';
 import { VoceChatClient } from './vocechat.ts';
 import { AudioError, probeAudio } from './audio.ts';
 import { createAsrProvider, createTtsProvider, speechOptions } from './speech.ts';
-import type { Destination, OutboundMessage, PreparedMessage, SessionPort, CredentialResolver, Logger } from './types.ts';
+import { boundHistory } from './history.ts';
+import type { ConversationHistory, Destination, HistoryMessage, OutboundMessage, PreparedMessage, SessionPort, CredentialResolver, Logger } from './types.ts';
 
 const silent: Logger = {debug(){},info(){},warn(){},error(){}};
 export class Bridge {
@@ -28,6 +29,9 @@ export class Bridge {
   private cleanupTimer?: ReturnType<typeof setInterval>;
   private activeTempDirs = new Set<string>();
   private failure?: string;
+  private historyError?: string;
+  private ingress = {posts:0,lastPostAt:undefined as number|undefined,lastHttpStatus:undefined as number|undefined,
+    recent:[] as {at:number;messageId?:number;senderId?:number;target?:Destination;status:string;reason?:string}[]};
   private ports: {session:SessionPort;resolveCredential:CredentialResolver;logger?:Logger;speechConfig?:()=>Partial<BridgeConfig>};
   constructor(config: Partial<BridgeConfig>, ports: {session:SessionPort;resolveCredential:CredentialResolver;logger?:Logger;speechConfig?:()=>Partial<BridgeConfig>}) {
     this.ports=ports;
@@ -92,6 +96,7 @@ export class Bridge {
     return {enabled:this.config.enabled,running:this.running,address:this.server?.address(),failure:this.failure,
       speech:{enabled:voice.voiceEnabled,asrEnabled:voice.asrEnabled,asrProvider:voice.asrProvider,asrModel:voice.asrModel,
         ttsEnabled:voice.ttsEnabled,ttsProvider:voice.ttsProvider,ttsModel:voice.ttsModel},
+      ingress:structuredClone(this.ingress),history:{contextMessages:this.config.historyContextMessages,maxChars:this.config.historyMaxChars,lastError:this.historyError},
       sessionId:this.config.targetSessionId,counts:Object.fromEntries(['pending','processing','done','failed','uncertain'].map(s=>[s,this.store.jobs.filter(j=>j.status===s).length])),
       batchCounts:Object.fromEntries(batchPhases.map(p=>[p,this.store.batches.filter(b=>b.phase===p).length])),
       blockedBatches:this.store.batches.filter(b=>['buffering','ready'].includes(b.phase)&&!this.canDispatch(b)).length,
@@ -99,8 +104,9 @@ export class Bridge {
   }
   private async handleHttp(req:HttpRequest,res:import('node:http').ServerResponse) {
     const url=new URL(req.url || '/', 'http://localhost');
-    const respond=(code:number,body:unknown)=>{res.writeHead(code,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(body));};
+    const respond=(code:number,body:unknown)=>{if(req.method==='POST')this.ingress.lastHttpStatus=code;res.writeHead(code,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(body));};
     if (url.pathname!==this.config.webhookPath) return respond(404,{error:'NOT_FOUND'});
+    if(req.method==='POST'){this.ingress.posts++;this.ingress.lastPostAt=Date.now();}
     // VoceChat validates the endpoint with GET. This probe exposes no data and
     // must succeed independently of POST credentials or query preservation.
     if(req.method==='GET') return respond(200,{ok:true});
@@ -122,12 +128,31 @@ export class Bridge {
     } catch(error:any) {return respond(error.message==='STATE_WRITE_FAILED'?503:400,{error:error.message==='STATE_WRITE_FAILED'?'STATE_WRITE_FAILED':'INVALID_EVENT'});}
   }
   async accept(value:unknown):Promise<'accepted'|'duplicate'|'ignored'|'full'> {
-    if(!this.running) return 'ignored';
+    try {
+      const result=await this.acceptMessage(value);
+      this.recordIngress(value,result.status,result.reason);return result.status;
+    }catch(error) {
+      this.recordIngress(value,'rejected',error instanceof Error && /^[A-Z_]+$/.test(error.message)?error.message:'INVALID_EVENT');throw error;
+    }
+  }
+  private recordIngress(value:unknown,status:string,reason?:string) {
+    const p=value as any;
+    const id=(value:unknown):value is number=>Number.isSafeInteger(value) && Number(value)>0;
+    this.ingress.recent.push({at:Date.now(),...(id(p?.mid)?{messageId:p.mid}:{}),...(id(p?.from_uid)?{senderId:p.from_uid}:{}),
+      ...(id(p?.target?.gid)?{target:{kind:'group' as const,id:p.target.gid}}:id(p?.target?.uid)?{target:{kind:'user' as const,id:p.target.uid}}:{}),status,...(reason?{reason}:{})});
+    if(this.ingress.recent.length>30)this.ingress.recent.shift();
+  }
+  private async acceptMessage(value:unknown):Promise<{status:'accepted'|'duplicate'|'ignored'|'full';reason?:string}> {
+    const ignore=(reason:string)=>({status:'ignored' as const,reason});
+    if(!this.running) return ignore('BRIDGE_STOPPED');
     const message=normalizeWebhook(value);
     const c=this.config;
     const rawTarget=(value as any)?.target;
-    if(rawTarget?.uid && rawTarget.uid!==c.botUid)return 'ignored';
-    if(!message || message.senderId===c.botUid || !allowedDestination(c,message.destination) || (message.destination.kind==='group' && c.groupSenderWhitelist.length && !c.groupSenderWhitelist.includes(message.senderId))) return 'ignored';
+    if(rawTarget?.uid && rawTarget.uid!==c.botUid)return ignore('OTHER_RECIPIENT');
+    if(!message)return ignore('UNSUPPORTED_MESSAGE');
+    if(message.senderId===c.botUid)return ignore('SELF_MESSAGE');
+    if(!allowedDestination(c,message.destination))return ignore('DESTINATION_DENIED');
+    if(message.destination.kind==='group' && c.groupSenderWhitelist.length && !c.groupSenderWhitelist.includes(message.senderId))return ignore('SENDER_DENIED');
     if(message.text.length>c.maxTextChars || message.attachments.some(a=>(a.size??0)>c.maxMediaBytes)) throw new Error('MESSAGE_TOO_LARGE');
     const receivedAt=Date.now();
     const result=await this.store.transaction(async()=>{
@@ -147,7 +172,35 @@ export class Bridge {
       }
       return 'accepted' as const;
     });
-    if(result==='accepted') this.schedule();return result;
+    if(result==='accepted') this.schedule();return {status:result,...(result==='ignored'?{reason:'BRIDGE_STOPPED'}:{})};
+  }
+  async getHistory(destination:Destination,limit=20,options:{signal?:AbortSignal;beforeId?:number}={}):Promise<ConversationHistory> {
+    if(!this.running)throw new Error('BRIDGE_STOPPED');
+    if(!allowedDestination(this.config,destination))throw new Error('DESTINATION_DENIED');
+    if(!Number.isSafeInteger(limit) || limit<1 || limit>100)throw new Error('INVALID_HISTORY_LIMIT');
+    const signal=AbortSignal.any([this.controller.signal,...(options.signal?[options.signal]:[]),AbortSignal.timeout(this.config.historyTimeoutMs)]);
+    // The Bot endpoint exposes the latest window, without a before cursor. Read
+    // a bounded window for queued batches and exclude every later/new message.
+    const recent=await this.client.getHistory(destination,this.config.botUid,options.beforeId===undefined?limit:100,signal);
+    const messages:HistoryMessage[]=recent.filter(m=>(options.beforeId===undefined || Number(m.id)<options.beforeId) &&
+      (destination.kind!=='group' || m.senderId===this.config.botUid || !this.config.groupSenderWhitelist.length || this.config.groupSenderWhitelist.includes(m.senderId)))
+      .map(message=>{
+        const cached=this.store.jobs.find(j=>j.sourceKey===this.sourceKey() && j.message.id===message.id && j.message.destination.kind===destination.kind && j.message.destination.id===destination.id);
+        return {...message,attachments:message.attachments.map((attachment,index)=>({...attachment,...(attachment.kind==='audio' && cached?.message.attachments[index]?.path===attachment.path?cached.preparedAudio?.[index]:{})}))};
+      });
+    this.historyError=undefined;
+    return boundHistory(destination,messages,limit,this.config.historyMaxChars);
+  }
+  private async contextHistory(messages:PreparedMessage[],signal:AbortSignal):Promise<ConversationHistory|undefined> {
+    const requested=this.config.historyContextMessages;if(!requested)return undefined;
+    const destination=messages[0].destination;
+    try{return await this.getHistory(destination,requested,{signal,beforeId:Math.min(...messages.map(m=>Number(m.id)))});}
+    catch(error) {
+      signal.throwIfAborted();
+      const code=error instanceof Error && /^[A-Z][A-Z0-9_]+$/.test(error.message)?error.message:'HISTORY_UNAVAILABLE';
+      if(this.historyError!==code)this.log.warn(`HISTORY_UNAVAILABLE: ${code}`);this.historyError=code;
+      return {destination:{...destination},messages:[],order:'oldest_first',requested,truncated:false,error:code};
+    }
   }
   private sourceKey() {return JSON.stringify([this.config.baseUrl,this.config.botUid]);}
   private scopeFor(job:Job):BufferScope {
@@ -205,8 +258,10 @@ export class Bridge {
         const prepared:PreparedMessage[]=[];
         for(const job of jobs)prepared.push(await this.prepare(job,dir,signal));
         signal.throwIfAborted();
+        const history=await this.contextHistory(prepared,signal);
+        signal.throwIfAborted();
         if(!this.ports.session.supportsSubmissionBarrier)await beforeSubmit();
-        const result=await this.ports.session.run(prepared,signal,{beforeSubmit});
+        const result=await this.ports.session.run(prepared,signal,{beforeSubmit,history});
         if(!submitted)throw new Error('SESSION_SUBMISSION_NOT_RECORDED');
         if(this.config.autoReply && !result.sent && !result.quiet && result.text?.trim()) await this.send(batch.scope.destination,{text:result.text}, {signal});
         await this.store.transaction(async()=>{

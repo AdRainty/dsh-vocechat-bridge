@@ -33,6 +33,9 @@ export declare const defaults: {
     mergeWindowMs: number;
     maxBatch: number;
     dedupTtlMs: number;
+    historyContextMessages: number;
+    historyMaxChars: number;
+    historyTimeoutMs: number;
     retentionMs: number;
     maxHistory: number;
     logLevel: string;

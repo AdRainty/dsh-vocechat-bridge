@@ -12,6 +12,7 @@ export const defaults = {
   maxAudioSeconds: 300, maxBodyBytes: 256 * 1024, maxQueue: 200, maxTextChars: 16000,
   textSegmentChars: 2000, privateQuietMs: 4000, groupQuietMs: 1500, maxWaitMs: 12000,
   mergeWindowMs: 0, maxBatch: 10, dedupTtlMs: 24 * 3600_000,
+  historyContextMessages: 6, historyMaxChars: 12000, historyTimeoutMs: 5000,
   retentionMs: 24 * 3600_000, maxHistory: 5000, logLevel: 'info',
   voiceEnabled: true, asrEnabled: false, asrProvider: 'openai', asrBaseUrl: '', asrModel: '', asrApiKeyRef: '', asrLanguage: '',
   asrAcceptedFormats: ['wav','mp3','ogg','m4a','flac','webm'] as AudioFormat[],
@@ -52,6 +53,7 @@ export function parseConfig(input: Partial<BridgeConfig> = {}): BridgeConfig {
   }
   if (c.webhookPort > 65535 || !/^\/[\w/-]+$/.test(c.webhookPath) || c.mergeWindowMs > 60_000 || c.maxBatch > 100 || !['debug','info','warn','error'].includes(c.logLevel)) throw new Error('Invalid webhook/batch/log config');
   if (c.privateQuietMs > 3600_000 || c.groupQuietMs > 3600_000 || c.maxWaitMs > 3600_000) throw new Error('Invalid debounce limits');
+  if (c.historyContextMessages > 50 || c.historyMaxChars < 2000 || c.historyMaxChars > 128000 || c.historyTimeoutMs < 1 || c.historyTimeoutMs > 60000) throw new Error('Invalid history limits');
   if(c.asrTimeoutMs>0xffffffff || c.ttsTimeoutMs>0xffffffff)throw new Error('Invalid speech timeout');
   // Nonzero legacy values explicitly override both quiet periods. Zero disables
   // this compatibility alias; new configurations use the fields above.

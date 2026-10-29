@@ -1,4 +1,4 @@
-import type { Destination, OutgoingAttachment } from './types.ts';
+import type { Destination, IncomingMessage, OutgoingAttachment } from './types.ts';
 export declare function mimeOf(name: string): string;
 export interface VoceChatOptions {
     baseUrl: string;
@@ -37,6 +37,8 @@ export declare class VoceChatClient {
     private endpoint;
     private request;
     sendText(destination: Destination, text: string, options?: SendOptions): Promise<SendResult>;
+    /** VoceChat 0.5.38 Bot API: context is a count, not the user-token history limit. */
+    getHistory(destination: Destination, botUid: number, limit?: number, signal?: AbortSignal): Promise<IncomingMessage[]>;
     private parseMessageId;
     upload(bytes: Uint8Array, meta: {
         name: string;

@@ -5,7 +5,7 @@ import { defaults, parseConfig, speechFields } from "./config.js";
 export const settingsPath = '/api/vocechat-bridge/settings';
 export const connectionFields = ['enabled', 'baseUrl', 'botUid', 'botApiKeyRef', 'webhookSecretRef', 'webhookHost', 'webhookPort', 'webhookPath',
     'userWhitelist', 'groupWhitelist', 'groupSenderWhitelist', 'targetSessionId', 'agentPreset', 'autoReply', 'allowProactive',
-    'privateQuietMs', 'groupQuietMs', 'maxWaitMs', 'maxBatch', 'allowedLocalRoots', 'allowedRemoteOrigins'];
+    'privateQuietMs', 'groupQuietMs', 'maxWaitMs', 'maxBatch', 'historyContextMessages', 'historyMaxChars', 'historyTimeoutMs', 'allowedLocalRoots', 'allowedRemoteOrigins'];
 export const editableFields = [...connectionFields, ...speechFields, 'ffmpegPath', 'ffprobePath', 'maxAudioSeconds', 'maxMediaBytes'];
 const known = new Set(editableFields);
 const plainObject = (value) => !!value && typeof value === 'object' && !Array.isArray(value);

@@ -25,6 +25,21 @@ export type PreparedAttachment = IncomingAttachment & {
 export type PreparedMessage = Omit<IncomingMessage, 'attachments'> & {
     attachments: PreparedAttachment[];
 };
+/** Historical attachments are descriptors; they never cause another download or ASR call. */
+export type HistoryMessage = Omit<IncomingMessage, 'attachments'> & {
+    attachments: (IncomingAttachment & {
+        transcript?: string;
+        error?: string;
+    })[];
+};
+export type ConversationHistory = {
+    destination: Destination;
+    messages: HistoryMessage[];
+    order: 'oldest_first';
+    requested: number;
+    truncated: boolean;
+    error?: string;
+};
 export type OutgoingAttachment = {
     kind: 'image' | 'audio' | 'file';
     path?: string;
@@ -46,6 +61,7 @@ export type OutboundMessage = {
 };
 export type SessionRunOptions = {
     beforeSubmit: () => Promise<void>;
+    history?: ConversationHistory;
 };
 export interface SessionPort {
     supportsSubmissionBarrier?: boolean;

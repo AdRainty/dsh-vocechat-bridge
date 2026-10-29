@@ -1,5 +1,6 @@
 import { open, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { normalizeWebhook } from "./inbound.js";
 import { boundedResponse, downloadPublicUrl, validateHttpUrl } from "./network.js";
 const MIME = {
     '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif',
@@ -75,6 +76,40 @@ export class VoceChatClient {
             method: 'POST', headers: { 'content-type': options.replyTo !== undefined || options.format === 'markdown' ? 'text/markdown' : 'text/plain' }, body, signal: options.signal,
         });
         return { messageId: this.parseMessageId(result.bytes) };
+    }
+    /** VoceChat 0.5.38 Bot API: context is a count, not the user-token history limit. */
+    async getHistory(destination, botUid, limit = 20, signal) {
+        this.endpoint(destination);
+        positiveId(botUid);
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+            throw new Error('INVALID_HISTORY_LIMIT');
+        const result = await this.request(`api/bot/${destination.kind}/${destination.id}/messages?context=${limit}`, { signal }, 2 * 1024 * 1024);
+        let data;
+        try {
+            data = JSON.parse(result.bytes.toString('utf8'));
+        }
+        catch {
+            throw new Error('VOCECHAT_INVALID_HISTORY');
+        }
+        if (!Array.isArray(data) || data.length > 1000)
+            throw new Error('VOCECHAT_INVALID_HISTORY');
+        const messages = new Map();
+        for (const item of data) {
+            const from = item?.from_uid, target = item?.target;
+            const inConversation = destination.kind === 'group' ? target?.gid === destination.id && !target?.uid
+                : !target?.gid && ((from === botUid && target?.uid === destination.id) || (from === destination.id && target?.uid === botUid));
+            if (!inConversation)
+                continue;
+            try {
+                const message = normalizeWebhook(item);
+                if (message)
+                    messages.set(message.id, { ...message, destination: { ...destination } });
+            }
+            catch {
+                throw new Error('VOCECHAT_INVALID_HISTORY');
+            }
+        }
+        return [...messages.values()].sort((a, b) => Number(a.id) - Number(b.id)).slice(-limit);
     }
     parseMessageId(bytes) {
         const id = Number(bytes.toString('utf8').trim());

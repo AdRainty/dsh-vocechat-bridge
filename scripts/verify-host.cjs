@@ -168,7 +168,7 @@ async function main() {
     assert.equal(logs.filter(item => item.level === 'error').length, 0);
     assert.deepEqual(registered.map(tool => tool.name), [
       'voce_send_text', 'voce_send_image', 'voce_send_audio', 'voce_send_file',
-      'voce_speak', 'voce_send_message', 'voce_quiet', 'voce_bridge_status',
+      'voce_speak', 'voce_send_message', 'voce_quiet', 'voce_get_private_history', 'voce_get_group_history', 'voce_bridge_status',
     ]);
     const status = registered.find(tool => tool.name === 'voce_bridge_status');
     assert.equal(JSON.parse(await status.execute({}, {})).running, false);

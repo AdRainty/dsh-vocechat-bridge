@@ -16,6 +16,9 @@
         privateQuietMs: 4000
         groupQuietMs: 1500
         maxWaitMs: 12000
+        historyContextMessages: 6
+        historyMaxChars: 12000
+        historyTimeoutMs: 5000
         voiceEnabled: true
         asrEnabled: false
         asrProvider: openai

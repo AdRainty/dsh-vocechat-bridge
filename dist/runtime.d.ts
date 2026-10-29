@@ -60,6 +60,24 @@ export declare class BridgeRuntime {
             ttsProvider: string;
             ttsModel: string;
         } | undefined;
+        ingress?: {
+            posts: number;
+            lastPostAt: number | undefined;
+            lastHttpStatus: number | undefined;
+            recent: {
+                at: number;
+                messageId?: number;
+                senderId?: number;
+                target?: Destination;
+                status: string;
+                reason?: string;
+            }[];
+        } | undefined;
+        history?: {
+            contextMessages: number;
+            maxChars: number;
+            lastError: string | undefined;
+        } | undefined;
         counts?: {
             [k: string]: number;
         } | undefined;
@@ -75,6 +93,7 @@ export declare class BridgeRuntime {
         } | undefined;
     };
     send(destination: Destination, message: OutboundMessage, options?: Parameters<Bridge['send']>[2]): Promise<unknown[]>;
+    getHistory(destination: Destination, limit?: number, options?: Parameters<Bridge['getHistory']>[2]): Promise<import("./types.ts").ConversationHistory>;
     readonly session: {
         outboundMode: (agent: HostAgent | undefined, destination: Destination) => {
             proactive: boolean;

@@ -34,6 +34,9 @@
     groupQuietMs: 1500
     maxWaitMs: 12000
     maxBatch: 10
+    historyContextMessages: 6 # 每批附带前面的同会话历史；0 关闭，最大 50
+    historyMaxChars: 12000 # 历史结果 JSON 字符预算，超限优先保留较新的消息
+    historyTimeoutMs: 5000 # 查询失败不阻塞新消息
     dedupTtlMs: 86400000
     retentionMs: 86400000
     logLevel: info

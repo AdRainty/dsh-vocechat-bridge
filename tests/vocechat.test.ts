@@ -16,6 +16,8 @@ async function fixture(t: any) {
   let stallBody = false;
   let nextId = 100;
   let fileSize = 3;
+  let history:any[]=[];
+  const historyQueries:string[]=[];
   const server = createServer(async (req, res) => {
     try {
       assert.equal(req.headers['x-api-key'], 'mock-key');
@@ -28,7 +30,9 @@ async function fixture(t: any) {
       events.push({ path: url.pathname, body, type, props });
       if (redirect) { res.writeHead(302, { location: '/api/leak-key' }); res.end(); return; }
       if (stallBody) { res.writeHead(200); res.flushHeaders(); res.write('1'); return; }
-      if (url.pathname === '/api/bot/file/prepare') {
+      if (/^\/api\/bot\/(user|group)\/\d+\/messages$/.test(url.pathname)) {
+        historyQueries.push(url.search);res.setHeader('content-type','application/json');res.end(JSON.stringify(history));
+      } else if (url.pathname === '/api/bot/file/prepare') {
         assert.deepEqual(Object.keys(JSON.parse(body.toString())).sort(), ['content_type', 'filename']);
         res.end(JSON.stringify('dbd06c27-523d-450d-9767-5a211fed229a'));
       } else if (url.pathname === '/api/bot/file/upload') {
@@ -57,6 +61,7 @@ async function fixture(t: any) {
   const baseUrl = `http://127.0.0.1:${address.port}`;
   const client = new VoceChatClient({ baseUrl, resolveApiKey: async () => 'mock-key', allowedLocalRoots: [dir] });
   return { client, dir, events, baseUrl, setRejectAudio: () => { rejectAudio = true; }, setRejectUpload: () => { rejectUpload = true; },
+    setHistory:(value:any[])=>{history=value;},historyQueries,
     setRedirect: () => { redirect = true; }, setStallBody: () => { stallBody = true; } };
 }
 
@@ -70,6 +75,19 @@ test('private/group text, unicode, multiline and logical reply use documented Bo
   assert.equal(f.events[1].body.toString(), '> 回复消息 #29\n\n回答');
   await assert.rejects(f.client.sendText({ kind: 'group', id: -1 }, 'x'), /INVALID_TARGET_ID/);
   await assert.rejects(f.client.sendText({ kind: 'user', id: 3 }, '  '), /EMPTY_TEXT/);
+});
+
+test('Bot history uses context count, restores both DM directions and isolates groups',async t=>{
+  const f=await fixture(t);
+  const message=(mid:number,from_uid:number,target:any)=>({mid,from_uid,target,created_at:mid,detail:{type:'normal',content_type:'text/plain',content:`message-${mid}`}});
+  f.setHistory([message(8,3,{uid:2}),message(4,2,{uid:3}),message(7,9,{uid:2}),message(8,3,{uid:2}),message(6,3,{gid:8}),message(9,3,{gid:9})]);
+  const dm=await f.client.getHistory({kind:'user',id:3},2,5);
+  assert.deepEqual(dm.map(m=>[m.id,m.senderId,m.destination]),[['4',2,{kind:'user',id:3}],['8',3,{kind:'user',id:3}]]);
+  assert.deepEqual((await f.client.getHistory({kind:'group',id:8},2,5)).map(m=>m.id),['6']);
+  assert.deepEqual(f.events.map(e=>e.path),['/api/bot/user/3/messages','/api/bot/group/8/messages']);
+  assert.deepEqual(f.historyQueries,['?context=5','?context=5']);
+  await assert.rejects(f.client.getHistory({kind:'user',id:3},2,101),/INVALID_HISTORY_LIMIT/);
+  assert.equal(f.events.length,2);
 });
 
 test('prepare + multipart upload + image/file/audio send preserve Unicode metadata', async t => {

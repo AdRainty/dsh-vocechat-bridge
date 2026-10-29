@@ -68,6 +68,7 @@ bridge = new Bridge({ enabled: true, baseUrl: input.baseUrl, botUid: input.botUi
   botApiKeyRef: 'LIVE_BOT_KEY', webhookSecretRef: 'LIVE_WEBHOOK_SECRET',
   webhookHost: input.host || '0.0.0.0', webhookPort: input.port ?? 34567, webhookPath: '/vocehook',
   targetSessionId: 'live-receive-only-audit', autoReply: false, allowProactive: false,
+  historyContextMessages: 0,
   asrEnabled: false, statePath: join(outputDir, 'state.json'), tempDir: join(outputDir, 'tmp'),
   userWhitelist: [...resumedUsers], groupWhitelist: [...resumedGroups], privateQuietMs: input.privateQuietMs ?? 4000,
   groupQuietMs: input.groupQuietMs ?? 1500, maxWaitMs: input.maxWaitMs ?? 12000,

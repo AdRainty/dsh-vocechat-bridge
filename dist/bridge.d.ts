@@ -1,7 +1,7 @@
 import { type BridgeConfig } from './config.ts';
 import { StateStore } from './state.ts';
 import { VoceChatClient } from './vocechat.ts';
-import type { Destination, OutboundMessage, SessionPort, CredentialResolver, Logger } from './types.ts';
+import type { ConversationHistory, Destination, OutboundMessage, SessionPort, CredentialResolver, Logger } from './types.ts';
 export declare class Bridge {
     readonly config: BridgeConfig;
     readonly store: StateStore;
@@ -18,6 +18,8 @@ export declare class Bridge {
     private cleanupTimer?;
     private activeTempDirs;
     private failure?;
+    private historyError?;
+    private ingress;
     private ports;
     constructor(config: Partial<BridgeConfig>, ports: {
         session: SessionPort;
@@ -42,6 +44,24 @@ export declare class Bridge {
             ttsProvider: string;
             ttsModel: string;
         };
+        ingress: {
+            posts: number;
+            lastPostAt: number | undefined;
+            lastHttpStatus: number | undefined;
+            recent: {
+                at: number;
+                messageId?: number;
+                senderId?: number;
+                target?: Destination;
+                status: string;
+                reason?: string;
+            }[];
+        };
+        history: {
+            contextMessages: number;
+            maxChars: number;
+            lastError: string | undefined;
+        };
         sessionId: string;
         counts: {
             [k: string]: number;
@@ -59,6 +79,13 @@ export declare class Bridge {
     };
     private handleHttp;
     accept(value: unknown): Promise<'accepted' | 'duplicate' | 'ignored' | 'full'>;
+    private recordIngress;
+    private acceptMessage;
+    getHistory(destination: Destination, limit?: number, options?: {
+        signal?: AbortSignal;
+        beforeId?: number;
+    }): Promise<ConversationHistory>;
+    private contextHistory;
     private sourceKey;
     private scopeFor;
     private canDispatch;

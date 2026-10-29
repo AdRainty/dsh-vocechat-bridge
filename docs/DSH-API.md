@@ -44,9 +44,9 @@ v0.2.0 先按来源/会话/发送者完成独立防抖并封批，再准备附�
 
 已运行 `node --experimental-strip-types --test tests/dsh.test.ts`，**19 个测试通过**，覆盖来源归属、共享会话顺序、其他渠道混入、最后 step、失败 turn、冷恢复、模型和 preset 恢复、observation lease 释放、原生附件、取消、工具发送、部分成功与 quiet，以及合并批次单条投递、提交屏障、忙碌等待超时隔离、不同发送者拒绝合并和前置 Web turn 隔离。
 
-另外使用本机 **真实 0.2.1-rc.3** `dsh-tools.defineTool` 编译全部八个工具的参数 schema（含 `voce_speak`），均通过；使用真实 `dsh-llm.createUserMessage` 和 `dsh-session.Session.create/append` 验证结构化插件 source 的 `user/message`，已被宿主接受且消息不可变。这些验证只在内存中执行，不连接生产会话、不调用模型、不发送真实消息。
+另外使用本机 **真实 0.2.1-rc.3** `dsh-tools.defineTool` 编译全部十个工具的参数 schema（含 `voce_speak` 与两个历史查询工具），均通过；使用真实 `dsh-llm.createUserMessage` 和 `dsh-session.Session.create/append` 验证结构化插件 source 的 `user/message`，已被宿主接受且消息不可变。这些验证只在内存中执行，不连接生产会话、不调用模型、不发送真实消息。
 
-完整插件入口也已执行本机 smoke：加载实际 `dist/index.js`，使用真实 Schemastery 解析默认配置、真实 `defineTool` 编译和校验工具，在假 Cordis ctx 中调用 `apply`、effect 与重复 dispose。结果：默认 disabled、八个工具注册成功、`listenCalls:0`、正常清理、用户配置写入/模型调用/真实消息均为零。
+完整插件入口也已执行本机 smoke：加载实际 `dist/index.js`，使用真实 Schemastery 解析默认配置、真实 `defineTool` 编译和校验工具，在假 Cordis ctx 中调用 `apply`、effect 与重复 dispose。结果：默认 disabled、十个工具注册成功、`listenCalls:0`、正常清理、用户配置写入/模型调用/真实消息均为零。
 
 v0.3.0 只在官方 `plugins.item/configForms` 组合中验证，用户实际界面没有出现入口。v0.3.1 改为照本机 `dsh-bili-scroll@2.2.1`：客户端只注入 `slots`，在 `settings.section` 注册“VoceChat”；宿主可选注入 `webServer`，挂载 `/api/vocechat-bridge/settings`。不再依赖官方插件管理器插槽、locale 或 remote 客户端服务。
 
