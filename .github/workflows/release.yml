@@ -2,8 +2,12 @@ name: Release plugin
 
 on:
   push:
+    branches:
+      - master
     tags:
       - 'v*'
+    paths:
+      - '.github/workflows/release.yml'
   workflow_dispatch:
     inputs:
       tag:
@@ -15,26 +19,32 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  group: plugin-release
   cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
     env:
-      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      REQUESTED_TAG: ${{ github.event.inputs.tag || (github.ref_type == 'tag' && github.ref_name) || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ github.event.inputs.tag || github.ref }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22.19.0'
           cache: npm
       - name: Check tag and package version
+        id: version
         run: |
-          node -e 'const p = require("./package.json"); if (process.env.RELEASE_TAG !== "v" + p.version) throw new Error("Tag must match package.json version");'
+          node -e 'const fs = require("node:fs"), p = require("./package.json"); const tag = "v" + p.version; if (process.env.REQUESTED_TAG && process.env.REQUESTED_TAG !== tag) throw new Error("Tag must match package.json version"); fs.appendFileSync(process.env.GITHUB_OUTPUT, "tag=" + tag + "\n");'
+      - name: Check out the immutable release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.version.outputs.tag }}
+          persist-credentials: false
       - run: npm ci --legacy-peer-deps
       - run: npm run build
       - name: Package plugin with built dist
@@ -47,6 +57,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" release-assets/*.tgz release-assets/SHA256SUMS --clobber
