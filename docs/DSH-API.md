@@ -4,6 +4,8 @@
 
 ## 核实到的接口
 
+v0.4.6 的入站引用沿用一条 `createUserMessage`：`source.messages` 仍只列本批新消息，新增可选 `replyTo` 与引用可用状态。被引用的原文以明确标注的用户消息背景提供；引用图片、文件及原音频沿用原生 `image` / `file` 内容块，已有转写放在背景中。系统上下文只带关系元数据，不把被引用原文放入更高权限角色，也不为旧消息新建回合。
+
 | 发行包与源码位置 | 实际接口及用途 |
 | --- | --- |
 | `dsh-agent/lib/index.js`，`Agents.get/resume/withInitiator` | `get(id)` 获取固定 ID 的 live Agent；缺失时 `resume({resumeSessionId,agentOptions,setup,signal})` 恢复同一持久会话。绝不创建替代会话或回退到活跃会话。 |

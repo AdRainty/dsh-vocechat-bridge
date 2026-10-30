@@ -3,9 +3,10 @@ export type IncomingAttachment = { kind: 'image' | 'audio' | 'file'; path: strin
 export type IncomingMessage = {
   id: string; senderId: number; destination: Destination; timestamp: number;
   text: string; attachments: IncomingAttachment[];
+  replyTo?: string;
 };
 export type PreparedAttachment = IncomingAttachment & { localPath?: string; transcript?: string; error?: string };
-export type PreparedMessage = Omit<IncomingMessage, 'attachments'> & { attachments: PreparedAttachment[] };
+export type PreparedMessage = Omit<IncomingMessage, 'attachments'> & { attachments: PreparedAttachment[]; quote?: QuotedContext };
 /** Historical attachments are descriptors; they never cause another download or ASR call. */
 export type HistoryMessage = Omit<IncomingMessage, 'attachments'> & {
   attachments: (IncomingAttachment & {transcript?: string; error?: string})[];
@@ -13,6 +14,11 @@ export type HistoryMessage = Omit<IncomingMessage, 'attachments'> & {
 export type ConversationHistory = {
   destination: Destination; messages: HistoryMessage[]; order: 'oldest_first';
   requested: number; truncated: boolean; error?: string;
+};
+/** One level of external reference background; media is ephemeral, not a new inbound job. */
+export type QuotedContext = {
+  id: string; status: 'available' | 'unavailable'; message?: HistoryMessage;
+  truncated?: boolean; error?: string; mediaError?: string; media?: PreparedAttachment[];
 };
 export type OutgoingAttachment = { kind: 'image' | 'audio' | 'file'; path?: string; url?: string; name?: string; mime?: string };
 export type SpeechRequest = { text: string; voice?: string; instructions?: string };

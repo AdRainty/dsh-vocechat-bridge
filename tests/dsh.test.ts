@@ -84,6 +84,28 @@ test('a merged batch becomes exactly one user message with ordered content and o
   assert.deepEqual(f.queued[0].source.messages.map((m:any)=>m.id),['41','42']);
 });
 
+test('quoted text and native media stay in user background with reply metadata and one current user message',async()=>{
+  const f=fixture(),dir=await mkdtemp(join(tmpdir(),'voce-dsh-quote-'));
+  try {
+    const image=join(dir,'quote.png'),audio=join(dir,'quote.wav');await writeFile(image,'PNG');await writeFile(audio,'WAV');
+    const message:PreparedMessage={...incoming('this is the new question'),replyTo:'40',quote:{id:'40',status:'available',message:{
+      ...incoming('quoted original text'),id:'40',senderId:2,attachments:[{kind:'audio',path:'2026/10/29/audio',name:'quote.wav',mime:'audio/wav',transcript:'cached transcript'}]},
+      media:[{kind:'image',path:'2026/10/29/image',name:'quote.png',mime:'image/png',localPath:image},{kind:'audio',path:'2026/10/29/audio',name:'quote.wav',mime:'audio/wav',localPath:audio,transcript:'must not duplicate this long transcript'}]}};
+    f.setFollowup(m=>{f.start(m);assert.doesNotMatch(f.contexts[0].text(),/quoted original text|cached transcript/);f.answer('done');});
+    await f.session.run([message],signal());
+    assert.equal(f.queued.length,1);const input=f.queued[0];
+    assert.match(input.content[0].text,/引用背景/);assert.match(input.content[0].text,/quoted original text/);assert.match(input.content[0].text,/cached transcript/);
+    assert.deepEqual(input.content.map((block:any)=>block.type),['text','image','file','text','text']);
+    assert.match(input.content[3].text,/本次新消息 #42（引用 #40）/);assert.equal(input.content[4].text,'this is the new question');
+    assert.deepEqual(input.source.messages.map((m:any)=>[m.id,m.replyTo,m.quote.status]),[['42','40','available']]);
+    assert.equal(f.images.length,1);assert.equal(Buffer.from(f.files[0].data).toString(),'WAV');
+    assert.doesNotMatch(JSON.stringify(input.content),/must not duplicate this long transcript|localPath/);
+    const unavailable={...incoming('missing original'),replyTo:'39'};
+    await f.session.run([unavailable],signal());assert.match(f.queued[1].content[0].text,/QUOTE_NOT_RESOLVED/);
+    assert.equal(f.queued[1].content.at(-1).text,'missing original');
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
+
 test('submission barrier runs after shared-session idle and before the single followup',async()=>{
   const f=fixture();let release!:()=>void,marked=0;
   f.agent.whenIdle=()=>new Promise<void>(r=>{release=r;});

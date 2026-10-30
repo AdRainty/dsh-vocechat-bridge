@@ -35,6 +35,7 @@ export class StateStore {
       const ids = new Set<string>();
       for (const job of value.jobs) {
         if (!job.message || typeof job.message.id !== 'string' || !Number.isFinite(job.acceptedAt) || !['pending','processing','done','failed','uncertain'].includes(job.status)) throw new Error('INVALID_STATE');
+        if(job.message.replyTo!==undefined && (typeof job.message.replyTo!=='string' || !Number.isSafeInteger(Number(job.message.replyTo)) || Number(job.message.replyTo)<=0 || Number(job.message.replyTo)>=Number(job.message.id)))throw new Error('INVALID_STATE');
         job.id ||= randomUUID();
         if (typeof job.id!=='string' || ids.has(job.id)) throw new Error('INVALID_STATE');
         ids.add(job.id);

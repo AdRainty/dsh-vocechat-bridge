@@ -12,6 +12,8 @@
 
 ## 历史查询与部署版本差异
 
+入站原生引用的关系位于 `detail.type: reply` 的 `detail.mid`，该字段指向原消息，`detail.content` 仍是本次新回复。插件保留 ID 后，在同一会话中补齐原文；引用与普通历史共享最多一次近期查询，补齐失败不阻止新消息。直接引用的附件可下载并作为 DSH 原生图片/文件附上，语音使用已有转写；不递归查询引用链，不把引用内容重新入队。字段结构和私聊、群聊、GIF 引用已在未修改的官方 0.5.38 本地服务上核对。
+
 在实际部署的 **VoceChat 0.5.38** 上只读核对 `/api/spec` 并成功调用：`GET /api/bot/user/{uid}/messages?context=N` 和 `GET /api/bot/group/{gid}/messages?context=N`，均使用 `x-api-key`，返回 `ChatMessage[]`，含 Bot 自己和其他 Bot 的消息。`context` 是条数；群接口另有可选 `user_id`，本插件不传，以取得同群完整背景。插件工具限制 N 为 1–100，响应限制 2 MiB，归一化后按消息 ID 从旧到新返回，并再次核对会话归属。
 
 不要把这两个 Bot 接口写成 `/api/user/{uid}/history?limit=N` 或 `/api/group/{gid}/history?limit=N`：后两者需要普通用户 Token，Bot Key 不等于用户登录 Token。当前 Bot 历史端点没有 `before` 参数；自动背景检查最新 100 条并筛选早于当前批次的消息。旧部署不支持时返回安全错误码，新消息仍正常提交，不尝试读取管理员凭据或登录态。

@@ -15,7 +15,7 @@ import type { PreparedMessage, SessionPort } from '../src/types.ts';
 
 const event=(mid:number,uid=10,gid?:number,content='hello')=>({mid,from_uid:uid,created_at:123,target:gid?{gid}:{uid:2},detail:{type:'normal',content_type:'text/plain',content}});
 const wav=()=>{const b=Buffer.alloc(44+3200);b.write('RIFF');b.writeUInt32LE(b.length-8,4);b.write('WAVEfmt ',8);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(16000,24);b.writeUInt32LE(32000,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(3200,40);return b;};
-async function waitFor(fn:()=>boolean) {for(let i=0;i<200;i++){if(fn())return;await sleep(10);}throw new Error('condition timed out');}
+async function waitFor(fn:()=>boolean,attempts=200) {for(let i=0;i<attempts;i++){if(fn())return;await sleep(10);}throw new Error('condition timed out');}
 async function setup(t:any, overrides:Partial<BridgeConfig>={}, run?:SessionPort['run'],sessionOptions:Pick<SessionPort,'supportsSubmissionBarrier'>={}) {
   const dir=await mkdtemp(join(tmpdir(),'voce-core-'));
   const sent:{url:string;text:string;type:string}[]=[];
@@ -82,6 +82,37 @@ test('normalize official direct/group payload, media and invalid event',()=>{
   const p=event(3) as any;p.detail={type:'normal',content_type:'vocechat/file',content:'a/b.png',properties:{content_type:'image/png',name:'x.png',size:5}};
   assert.equal(normalizeWebhook(p)?.attachments[0].kind,'image');
   assert.equal(normalizeWebhook({...p,detail:{...p.detail,type:'edit'}}),undefined);
+  assert.equal(normalizeWebhook({...event(5),detail:{type:'reply',mid:3,content_type:'text/plain',content:'reply'}})?.replyTo,'3');
+  assert.throws(()=>normalizeWebhook({...event(5),detail:{type:'reply',mid:5,content_type:'text/plain',content:'bad'}}),/INVALID_REPLY_TARGET/);
+});
+
+test('inbound replies keep quoted context, reuse one history request, preserve cached voice and fail softly across sources or outages',async t=>{
+  let voiceQuote:PreparedMessage['quote'],voiceBytes:Buffer|undefined;
+  const f=await setup(t,{historyContextMessages:2,groupQuietMs:200,maxBatch:2,asrEnabled:true},async messages=>{
+    for(const message of messages)if(message.replyTo==='2') {
+      voiceQuote=message.quote;
+      if(message.quote?.media?.[0].localPath)voiceBytes=await readFile(message.quote.media[0].localPath);
+    }
+    return {quiet:true};
+  });
+  const reply=(mid:number,to:number,text:string)=>({...event(mid,10,20,text),detail:{type:'reply',mid:to,content_type:'text/plain',content:text}});
+  f.setHistory([event(60,2,20,'quoted Bot text')]);
+  await f.bridge.accept(reply(100,60,'first response'));await f.bridge.accept(reply(101,60,'second response'));
+  await waitFor(()=>f.bridge.status().batchCounts.done===1);
+  assert.equal(f.calls.length,1);assert.deepEqual(f.calls[0].map(m=>[m.id,m.replyTo,m.text]),[['100','60','first response'],['101','60','second response']]);
+  assert.equal(f.calls[0][0].quote?.message?.text,'quoted Bot text');assert.equal(f.calls[0][0].quote,f.calls[0][1].quote);
+  assert.equal(f.historyRequests(),1);assert.equal(f.bridge.store.jobs.some(j=>j.message.id==='60'),false);
+  const audio={...event(2,10,20),detail:{type:'normal',content_type:'vocechat/audio',content:'2026/10/29/previous',properties:{content_type:'audio/wav',name:'original.wav'}}};
+  f.bridge.store.jobs.push({id:'cached-quote',message:normalizeWebhook(audio)!,acceptedAt:Date.now(),status:'done',sourceKey:JSON.stringify([f.base,2]),preparedAudio:{0:{transcript:'cached original speech'}}});
+  f.setHistory([]);await f.bridge.accept(reply(102,2,'about this voice'));await waitFor(()=>f.bridge.status().batchCounts.done===2,1000);
+  assert.equal(voiceQuote?.message?.attachments[0].transcript,'cached original speech');assert.deepEqual(voiceBytes,wav(),JSON.stringify(voiceQuote));assert.equal(f.asrRequests(),0);
+  f.bridge.store.jobs.push({id:'other-origin',message:normalizeWebhook(event(70,10,20,'other origin private'))!,acceptedAt:Date.now(),status:'done',sourceKey:'another-server'});
+  f.setHistory([event(70,10,99,'another group private')]);
+  await f.bridge.accept(reply(103,70,'missing reference'));await waitFor(()=>f.bridge.status().batchCounts.done===3);
+  assert.equal(f.calls[2][0].quote?.status,'unavailable');assert.equal(f.calls[2][0].quote?.message,undefined);
+  f.failHistory();await f.bridge.accept(reply(104,80,'still deliver'));await waitFor(()=>f.bridge.status().batchCounts.done===4);
+  assert.equal(f.calls[3][0].quote?.error,'VOCECHAT_HTTP_503');assert.equal(f.calls[3][0].text,'still deliver');
+  assert.equal(f.sent.length,0);assert.doesNotMatch(JSON.stringify(f.bridge.status()),/quoted Bot text|other origin private|another group private|cached original speech/);
 });
 test('HTTP webhook public GET validation, authenticated POST and durable ACK',async t=>{
   const {bridge,url,calls}=await setup(t);
@@ -239,12 +270,12 @@ test('bridge forwards explicit Markdown format to its native text sender',async 
 test('restart restores pending and dedup, quarantines uncertain turns and preserves session config',async t=>{
   const {bridge,dir}=await setup(t);await bridge.stop();
   const path=join(dir,'state.json');
-  const pending={message:normalizeWebhook(event(7)),acceptedAt:Date.now(),status:'pending'};
+  const pending={message:{...normalizeWebhook(event(7))!,replyTo:'2'},acceptedAt:Date.now(),status:'pending'};
   await writeFile(path,JSON.stringify({version:1,jobs:[pending,{...pending,message:normalizeWebhook(event(8)),status:'processing'}]}));
   const calls:PreparedMessage[][]=[];
   const next=new Bridge({...bridge.config},{session:{async run(m){calls.push(m);return {quiet:true};}},resolveCredential:async()=> 'test-secret'});
   t.after(()=>next.stop());await next.start();await waitFor(()=>next.status().counts.done===1);
-  assert.equal(next.status().counts.uncertain,1);assert.equal(calls[0][0].id,'7');assert.equal(await next.accept(event(8)),'duplicate');assert.equal(next.status().sessionId,'session-test');
+  assert.equal(next.status().counts.uncertain,1);assert.equal(calls[0][0].id,'7');assert.equal(calls[0][0].replyTo,'2');assert.equal(await next.accept(event(8)),'duplicate');assert.equal(next.status().sessionId,'session-test');
 });
 test('turn failure is quarantined, later jobs continue, state remains readable',async t=>{
   const {bridge,dir}=await setup(t,{},async m=>{if(m[0].id==='1')throw new Error('private internal error');return {quiet:true};});

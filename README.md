@@ -2,7 +2,7 @@
 
 连接 [DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness) 与 [VoceChat](https://voce.chat/) 的第三方插件。在 VoceChat 私聊或群聊中使用已有 DSH 会话，收发文字、图片、文件与语音，并保留该会话原有的人格、记忆和工具权限。
 
-**当前版本：0.4.5 · 许可证：Apache-2.0**
+**当前版本：0.4.6 · 许可证：Apache-2.0**
 
 - [GitHub](https://github.com/AdRainty/dsh-vocechat-bridge)
 - [GitLab](https://gitlab.adrainty.online/dsh-plugins/dsh-vocechat-bridge)
@@ -15,6 +15,7 @@
 - **固定会话**：绑定已有 DSH Session，按当前消息的来源回复；主动发送要求明确目标并受配置限制。
 - **消息缓冲**：按频道、会话、目标和发送者分别持久化防抖批次，支持忙碌排队、崩溃恢复与重复投递去重。
 - **历史上下文**：每批默认附带 6 条更早的同会话消息，另有私聊、群聊最近 N 条查询工具。
+- **引用上下文**：入站 Reply 保留被引用消息 ID，补齐原文、附件和已有语音转写，作为背景与本次新消息一起交给 DSH；图片可直接进入模型的图片内容块。
 - **设置页**：在 DSH 的“设置 → VoceChat”配置连接、白名单和语音，控制启动、停止和重载。启用状态会保存，DSH 下次启动时自动恢复。
 
 插件负责通信和媒体处理；人格、长期记忆与自主调度由 DSH 及相应插件管理。
@@ -45,7 +46,7 @@ dsh plugin --profile web add "$PWD"
 
 源码仓库不保留 `dist/`；上述构建步骤会生成插件入口 `dist/index.js`。运行时所需的三个 `@deepseek-ai/*` peer dependency 由 DSH 宿主提供。
 
-也可以直接下载 [GitHub Releases](https://github.com/AdRainty/dsh-vocechat-bridge/releases) 中的插件 tgz。发布包内含 `dist/`、客户端入口、配置和许可文件，无需自行编译；可通过 DSH 插件安装器安装。维护者运行 `npm pack` 可生成相同结构的 `dsh-vocechat-bridge-0.4.5.tgz`。
+也可以直接下载 [GitHub Releases](https://github.com/AdRainty/dsh-vocechat-bridge/releases) 中的插件 tgz。发布包内含 `dist/`、客户端入口、配置和许可文件，无需自行编译；可通过 DSH 插件安装器安装。维护者运行 `npm pack` 可生成相同结构的 `dsh-vocechat-bridge-0.4.6.tgz`。
 
 链接安装更新代码后，需要重载**插件包**才能替换已加载模块；宿主启用 HMR 时也可能自动重载。“保存并重载后端”用于应用连接配置，不负责重新导入代码。详见[安装与运行](docs/USAGE.md)。
 

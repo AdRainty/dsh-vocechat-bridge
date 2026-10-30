@@ -16,6 +16,10 @@ export function normalizeWebhook(value: unknown): IncomingMessage | undefined {
     timestamp: typeof p.created_at === 'number' && Number.isFinite(p.created_at) ? p.created_at : Date.now(),
     text: '', attachments: [],
   };
+  if (d.type === 'reply') {
+    if (!id(d.mid) || d.mid >= p.mid) throw new Error('INVALID_REPLY_TARGET');
+    message.replyTo = String(d.mid);
+  }
   if (['text/plain','text/markdown'].includes(d.content_type)) message.text = d.content;
   else if (['vocechat/file','vocechat/audio'].includes(d.content_type)) {
     const props = d.properties;

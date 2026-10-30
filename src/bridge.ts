@@ -11,9 +11,11 @@ import { AudioError, probeAudio } from './audio.ts';
 import { createAsrProvider, createTtsProvider, speechOptions } from './speech.ts';
 import { boundHistory } from './history.ts';
 import type { LocalFileResolver } from './files.ts';
-import type { ConversationHistory, Destination, HistoryMessage, OutboundMessage, PreparedMessage, SessionPort, CredentialResolver, Logger } from './types.ts';
+import type { ConversationHistory, Destination, HistoryMessage, IncomingMessage, OutboundMessage, PreparedMessage, QuotedContext, SessionPort, CredentialResolver, Logger } from './types.ts';
 
 const silent: Logger = {debug(){},info(){},warn(){},error(){}};
+type RecentHistory = {messages:IncomingMessage[];error?:never} | {messages?:never;error:string};
+const contextError=(error:unknown)=>error instanceof Error && /^[A-Z][A-Z0-9_]{2,64}$/.test(error.message)?error.message:'QUOTE_CONTEXT_UNAVAILABLE';
 export class Bridge {
   readonly config: BridgeConfig;
   readonly store: StateStore;
@@ -183,25 +185,66 @@ export class Bridge {
     // The Bot endpoint exposes the latest window, without a before cursor. Read
     // a bounded window for queued batches and exclude every later/new message.
     const recent=await this.client.getHistory(destination,this.config.botUid,options.beforeId===undefined?limit:100,signal);
-    const messages:HistoryMessage[]=recent.filter(m=>(options.beforeId===undefined || Number(m.id)<options.beforeId) &&
-      (destination.kind!=='group' || m.senderId===this.config.botUid || !this.config.groupSenderWhitelist.length || this.config.groupSenderWhitelist.includes(m.senderId)))
-      .map(message=>{
-        const cached=this.store.jobs.find(j=>j.sourceKey===this.sourceKey() && j.message.id===message.id && j.message.destination.kind===destination.kind && j.message.destination.id===destination.id);
-        return {...message,attachments:message.attachments.map((attachment,index)=>({...attachment,...(attachment.kind==='audio' && cached?.message.attachments[index]?.path===attachment.path?cached.preparedAudio?.[index]:{})}))};
-      });
     this.historyError=undefined;
+    return this.historyView(destination,recent,limit,options.beforeId);
+  }
+  private cachedHistoryMessage(message:IncomingMessage):HistoryMessage {
+    const cached=this.store.jobs.find(j=>j.sourceKey===this.sourceKey() && j.message.id===message.id && j.message.destination.kind===message.destination.kind && j.message.destination.id===message.destination.id);
+    return {...message,attachments:message.attachments.map((attachment,index)=>({...attachment,...(attachment.kind==='audio' && cached?.message.attachments[index]?.path===attachment.path?cached.preparedAudio?.[index]:{})}))};
+  }
+  private visibleHistory(message:IncomingMessage) {
+    return message.destination.kind!=='group' || message.senderId===this.config.botUid || !this.config.groupSenderWhitelist.length || this.config.groupSenderWhitelist.includes(message.senderId);
+  }
+  private historyView(destination:Destination,recent:IncomingMessage[],limit:number,beforeId?:number):ConversationHistory {
+    const messages=recent.filter(m=>(beforeId===undefined || Number(m.id)<beforeId) && this.visibleHistory(m)).map(message=>this.cachedHistoryMessage(message));
     return boundHistory(destination,messages,limit,this.config.historyMaxChars);
   }
-  private async contextHistory(messages:PreparedMessage[],signal:AbortSignal):Promise<ConversationHistory|undefined> {
+  private async contextHistory(messages:PreparedMessage[],signal:AbortSignal,recent?:RecentHistory):Promise<ConversationHistory|undefined> {
     const requested=this.config.historyContextMessages;if(!requested)return undefined;
     const destination=messages[0].destination;
-    try{return await this.getHistory(destination,requested,{signal,beforeId:Math.min(...messages.map(m=>Number(m.id)))});}
+    try{
+      if(recent?.error)throw new Error(recent.error);
+      const beforeId=Math.min(...messages.map(m=>Number(m.id)));
+      if(recent?.messages){this.historyError=undefined;return this.historyView(destination,recent.messages,requested,beforeId);}
+      return await this.getHistory(destination,requested,{signal,beforeId});
+    }
     catch(error) {
       signal.throwIfAborted();
       const code=error instanceof Error && /^[A-Z][A-Z0-9_]+$/.test(error.message)?error.message:'HISTORY_UNAVAILABLE';
       if(this.historyError!==code)this.log.warn(`HISTORY_UNAVAILABLE: ${code}`);this.historyError=code;
       return {destination:{...destination},messages:[],order:'oldest_first',requested,truncated:false,error:code};
     }
+  }
+  private async prepareQuotes(messages:PreparedMessage[],dir:string,signal:AbortSignal):Promise<RecentHistory|undefined> {
+    const replies=messages.filter(message=>message.replyTo!==undefined);
+    if(!replies.length)return undefined;
+    const destination=messages[0].destination,candidates=new Map<string,HistoryMessage>(),wanted=new Set(replies.map(message=>message.replyTo!)),sourceKey=this.sourceKey();
+    for(const job of this.store.jobs)if(wanted.has(job.message.id) && job.sourceKey===sourceKey && job.message.destination.kind===destination.kind && job.message.destination.id===destination.id && this.visibleHistory(job.message))
+      candidates.set(job.message.id,this.cachedHistoryMessage(job.message));
+    let recent:RecentHistory|undefined;
+    if(this.config.historyContextMessages || replies.some(message=>!candidates.has(message.replyTo!))) {
+      try {
+        const records=await this.client.getHistory(destination,this.config.botUid,100,AbortSignal.any([signal,AbortSignal.timeout(this.config.historyTimeoutMs)]));
+        recent={messages:records};
+        for(const message of records)if(this.visibleHistory(message))candidates.set(message.id,this.cachedHistoryMessage(message));
+      }catch(error){signal.throwIfAborted();recent={error:contextError(error)};}
+    }
+    const quotes=new Map<string,QuotedContext>();
+    for(const message of replies) {
+      const id=message.replyTo!;
+      if(quotes.has(id)){message.quote=quotes.get(id);continue;}
+      const reference=candidates.get(id);
+      if(!reference){message.quote={id,status:'unavailable',error:recent?.error ?? 'QUOTE_NOT_FOUND'};quotes.set(id,message.quote);continue;}
+      const bounded=boundHistory(destination,[reference],1,Math.min(4000,this.config.historyMaxChars));
+      const snapshot=bounded.messages[0];
+      const quote:QuotedContext=message.quote=snapshot?{id,status:'available',message:snapshot,truncated:bounded.truncated}:{id,status:'unavailable',error:'QUOTE_TOO_LARGE'};
+      quotes.set(id,quote);
+      if(snapshot && reference.attachments.length) {
+        try {quote.media=(await this.prepare({message:reference,acceptedAt:Date.now(),status:'done'},dir,signal,false)).attachments;}
+        catch(error){signal.throwIfAborted();quote.mediaError=contextError(error);}
+      }
+    }
+    return recent;
   }
   private sourceKey() {return JSON.stringify([this.config.baseUrl,this.config.botUid]);}
   private scopeFor(job:Job):BufferScope {
@@ -259,7 +302,8 @@ export class Bridge {
         const prepared:PreparedMessage[]=[];
         for(const job of jobs)prepared.push(await this.prepare(job,dir,signal));
         signal.throwIfAborted();
-        const history=await this.contextHistory(prepared,signal);
+        const recent=await this.prepareQuotes(prepared,dir,signal);
+        const history=await this.contextHistory(prepared,signal,recent);
         signal.throwIfAborted();
         if(!this.ports.session.supportsSubmissionBarrier)await beforeSubmit();
         const result=await this.ports.session.run(prepared,signal,{beforeSubmit,history});
@@ -286,7 +330,7 @@ export class Bridge {
       }
     }
   }
-  private async prepare(job:Job,dir:string,signal:AbortSignal):Promise<PreparedMessage> {
+  private async prepare(job:Job,dir:string,signal:AbortSignal,transcribe=true):Promise<PreparedMessage> {
     const message=job.message;
     const attachments:PreparedMessage['attachments']=[];
     for(const [index,attachment] of message.attachments.entries()) {
@@ -301,7 +345,7 @@ export class Bridge {
         await probeAudio({path:localPath,name:a.name,mime:a.mime},{maxBytes:this.config.maxMediaBytes,maxDurationSeconds:this.config.maxAudioSeconds,timeoutMs:this.config.requestTimeoutMs,ffmpegPath:this.config.ffmpegPath,ffprobePath:this.config.ffprobePath,tempDir:dir},signal);
         const cached=job.preparedAudio?.[index], config=this.speechConfig();
         if(cached)Object.assign(a,cached);
-        else if(config.voiceEnabled && config.asrEnabled) {
+        else if(transcribe && config.voiceEnabled && config.asrEnabled) {
           let result:{transcript?:string;error?:string};
           try{
             const provider=createAsrProvider({...speechOptions(config,this.ports.resolveCredential,'asr'),tempDir:dir});
