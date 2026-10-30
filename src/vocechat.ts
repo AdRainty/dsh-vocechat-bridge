@@ -5,6 +5,7 @@ import { normalizeWebhook } from './inbound.ts';
 import { boundedResponse, downloadPublicUrl, validateHttpUrl } from './network.ts';
 import { expandHomePath } from './files.ts';
 import type { LocalFileResolver } from './files.ts';
+import { cleanSenderName } from './senders.ts';
 
 const MIME: Record<string, string> = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif',
@@ -98,6 +99,17 @@ export class VoceChatClient {
       method: 'POST', headers: { 'content-type': options.format === 'markdown' ? 'text/markdown' : 'text/plain' }, body: text, signal: options.signal,
     });
     return { messageId: this.parseMessageId(result.bytes) };
+  }
+
+  /** 0.5.38's route spells UID in the path but its handler also requires the query UID. */
+  async getUserName(uid: number, signal?: AbortSignal): Promise<string> {
+    positiveId(uid);
+    const result = await this.request(`api/bot/user/${uid}?uid=${uid}`, { signal });
+    let user: any;
+    try { user = JSON.parse(result.bytes.toString('utf8')); } catch { throw new Error('VOCECHAT_INVALID_USER'); }
+    const name = cleanSenderName(user?.name);
+    if (user?.uid !== uid || !name) throw new Error('VOCECHAT_INVALID_USER');
+    return name;
   }
 
   /** VoceChat 0.5.38 Bot API: context is a count, not the user-token history limit. */

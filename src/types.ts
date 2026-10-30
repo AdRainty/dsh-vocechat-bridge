@@ -2,6 +2,7 @@ export type Destination = { kind: 'user' | 'group'; id: number };
 export type IncomingAttachment = { kind: 'image' | 'audio' | 'file'; path: string; name: string; mime: string; size?: number };
 export type IncomingMessage = {
   id: string; senderId: number; destination: Destination; timestamp: number;
+  senderName?: string;
   text: string; attachments: IncomingAttachment[];
   replyTo?: string;
 };

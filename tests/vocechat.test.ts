@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { VoceChatClient } from '../src/vocechat.ts';
+import { SenderNames } from '../src/senders.ts';
 import { boundedResponse, downloadPublicUrl, isPublicAddress, validateHttpUrl } from '../src/network.ts';
 
 async function fixture(t: any) {
@@ -19,6 +20,7 @@ async function fixture(t: any) {
   let fileSize = 3;
   let history:any[]=[];
   const historyQueries:string[]=[];
+  const profiles=new Map<number,{body:unknown;status:number}>(),userQueries:string[]=[];
   const server = createServer(async (req, res) => {
     try {
       assert.equal(req.headers['x-api-key'], 'mock-key');
@@ -33,6 +35,9 @@ async function fixture(t: any) {
       if (stallBody) { res.writeHead(200); res.flushHeaders(); res.write('1'); return; }
       if (/^\/api\/bot\/(user|group)\/\d+\/messages$/.test(url.pathname)) {
         historyQueries.push(url.search);res.setHeader('content-type','application/json');res.end(JSON.stringify(history));
+      } else if (/^\/api\/bot\/user\/\d+$/.test(url.pathname)) {
+        const uid=Number(url.pathname.split('/').at(-1));assert.equal(url.searchParams.get('uid'),String(uid));userQueries.push(url.pathname+url.search);
+        const profile=profiles.get(uid);res.writeHead(profile?.status??200,{'content-type':'application/json'});res.end(JSON.stringify(profile?.body??{uid,name:`User ${uid}`}));
       } else if (url.pathname === '/api/bot/file/prepare') {
         assert.deepEqual(Object.keys(JSON.parse(body.toString())).sort(), ['content_type', 'filename']);
         res.end(JSON.stringify('dbd06c27-523d-450d-9767-5a211fed229a'));
@@ -65,8 +70,40 @@ async function fixture(t: any) {
   return { client, dir, events, baseUrl, setRejectAudio: () => { rejectAudio = true; }, setRejectUpload: () => { rejectUpload = true; },
     setReplyStatus:(value:number)=>{replyStatus=value;},
     setHistory:(value:any[])=>{history=value;},historyQueries,
+    setProfile:(uid:number,body:unknown,status=200)=>profiles.set(uid,{body,status}),userQueries,
     setRedirect: () => { redirect = true; }, setStallBody: () => { stallBody = true; } };
 }
+
+test('sender names use UID-checked Bot profiles, shared expiring cache, safe fallbacks and a bounded lookup deadline',async t=>{
+  const f=await fixture(t);let now=1000;
+  const names=new SenderNames((uid,signal)=>f.client.getUserName(uid,signal),{now:()=>now});
+  const messages:{senderId:number;senderName?:string}[]=[{senderId:3},{senderId:3},{senderId:4}],concurrent=[{senderId:3}] as typeof messages;
+  await Promise.all([names.apply(messages,new AbortController().signal),names.apply(concurrent,new AbortController().signal)]);
+  assert.deepEqual(messages.map(m=>m.senderName),['User 3','User 3','User 4']);assert.equal(concurrent[0].senderName,'User 3');assert.equal(f.userQueries.length,2);
+  f.setProfile(3,{uid:3,name:'改名后的显示名'});
+  await names.apply(messages,new AbortController().signal);assert.equal(messages[0].senderName,'User 3');assert.equal(f.userQueries.length,2);
+  now+=300_001;await names.apply(concurrent,new AbortController().signal);assert.equal(concurrent[0].senderName,'改名后的显示名');assert.equal(f.userQueries.length,3);
+  f.setProfile(5,{detail:'private profile failure'},503);const failed=[{senderId:5}] as typeof messages;
+  await names.apply(failed,new AbortController().signal);await names.apply(failed,new AbortController().signal);
+  assert.equal(failed[0].senderName,'UID 5');assert.equal(f.userQueries.length,4);
+  now+=30_001;f.setProfile(5,{uid:5,name:'恢复的显示名'});await names.apply(failed,new AbortController().signal);assert.equal(failed[0].senderName,'恢复的显示名');
+  f.setProfile(6,{uid:99,name:'wrong account'});const mismatch=[{senderId:6}] as typeof messages;
+  await names.apply(mismatch,new AbortController().signal);assert.equal(mismatch[0].senderName,'UID 6');
+  f.setProfile(7,{uid:7,name:' A\nB\u202e'+'长'.repeat(200),email:'hidden@example.invalid'});
+  const cleaned=await f.client.getUserName(7);assert.equal(Array.from(cleaned).length,128);assert.match(cleaned,/^A B/);assert.doesNotMatch(cleaned,/[\n\u202e]|hidden@example/);
+  let stalledCalls=0;const stalled=new SenderNames(async()=>{stalledCalls++;return new Promise<string>(()=>{});},{timeoutMs:20});
+  const waiting=Array.from({length:20},(_,i)=>({senderId:i+1,senderName:''}));await stalled.apply(waiting,new AbortController().signal);
+  assert.equal(stalledCalls,4);assert.ok(waiting.every(m=>m.senderName===`UID ${m.senderId}`));
+  const releases=new Map<number,(value:string)=>void>();
+  const shared=new SenderNames(uid=>new Promise<string>(resolve=>releases.set(uid,resolve)),{timeoutMs:1000});
+  const control=new AbortController();let cancelled=false,otherDone=false;
+  const first=shared.apply(Array.from({length:5},(_,i)=>({senderId:i+1})),control.signal).catch(error=>{assert.equal(error.message,'STOPPED');cancelled=true;});
+  await new Promise(resolve=>setImmediate(resolve));
+  const second=shared.apply([{senderId:5}],new AbortController().signal).then(()=>{otherDone=true;});
+  await new Promise(resolve=>setImmediate(resolve));releases.get(1)!('One');await new Promise(resolve=>setImmediate(resolve));
+  control.abort(new Error('STOPPED'));await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(cancelled,true);assert.equal(otherDone,false);releases.get(5)!('Five');await Promise.all([first,second]);
+});
 
 test('private/group text and native replies preserve Unicode, format and original body', async t => {
   const f = await fixture(t);

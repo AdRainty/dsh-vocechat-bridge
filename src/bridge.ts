@@ -10,6 +10,7 @@ import { VoceChatClient } from './vocechat.ts';
 import { AudioError, probeAudio } from './audio.ts';
 import { createAsrProvider, createTtsProvider, speechOptions } from './speech.ts';
 import { boundHistory } from './history.ts';
+import { SenderNames } from './senders.ts';
 import type { LocalFileResolver } from './files.ts';
 import type { ConversationHistory, Destination, HistoryMessage, IncomingMessage, OutboundMessage, PreparedMessage, QuotedContext, SessionPort, CredentialResolver, Logger } from './types.ts';
 
@@ -20,6 +21,7 @@ export class Bridge {
   readonly config: BridgeConfig;
   readonly store: StateStore;
   readonly client: VoceChatClient;
+  private senderNames: SenderNames;
   private buffer: DebounceBuffer;
   private server?: Server;
   private controller = new AbortController();
@@ -48,6 +50,7 @@ export class Bridge {
       }, timeoutMs:this.config.requestTimeoutMs,maxMediaBytes:this.config.maxMediaBytes,
       allowedLocalRoots:this.config.allowedLocalRoots,allowedRemoteOrigins:this.config.allowedRemoteOrigins,
     });
+    this.senderNames=new SenderNames((id,signal)=>this.client.getUserName(id,signal),{timeoutMs:Math.min(1500,this.config.historyTimeoutMs)});
   }
   private speechConfig() { return parseConfig({...this.config,...this.ports.speechConfig?.()}); }
   async start() {
@@ -181,12 +184,14 @@ export class Bridge {
     if(!this.running)throw new Error('BRIDGE_STOPPED');
     if(!allowedDestination(this.config,destination))throw new Error('DESTINATION_DENIED');
     if(!Number.isSafeInteger(limit) || limit<1 || limit>100)throw new Error('INVALID_HISTORY_LIMIT');
-    const signal=AbortSignal.any([this.controller.signal,...(options.signal?[options.signal]:[]),AbortSignal.timeout(this.config.historyTimeoutMs)]);
+    const signal=AbortSignal.any([this.controller.signal,...(options.signal?[options.signal]:[])]);
     // The Bot endpoint exposes the latest window, without a before cursor. Read
     // a bounded window for queued batches and exclude every later/new message.
-    const recent=await this.client.getHistory(destination,this.config.botUid,options.beforeId===undefined?limit:100,signal);
+    const recent=await this.client.getHistory(destination,this.config.botUid,options.beforeId===undefined?limit:100,AbortSignal.any([signal,AbortSignal.timeout(this.config.historyTimeoutMs)]));
     this.historyError=undefined;
-    return this.historyView(destination,recent,limit,options.beforeId);
+    const history=this.historyView(destination,recent,limit,options.beforeId);
+    await this.senderNames.apply(history.messages,signal);
+    return this.namedHistory(history);
   }
   private cachedHistoryMessage(message:IncomingMessage):HistoryMessage {
     const cached=this.store.jobs.find(j=>j.sourceKey===this.sourceKey() && j.message.id===message.id && j.message.destination.kind===message.destination.kind && j.message.destination.id===message.destination.id);
@@ -199,6 +204,20 @@ export class Bridge {
     const messages=recent.filter(m=>(beforeId===undefined || Number(m.id)<beforeId) && this.visibleHistory(m)).map(message=>this.cachedHistoryMessage(message));
     return boundHistory(destination,messages,limit,this.config.historyMaxChars);
   }
+  private namedHistory(history:ConversationHistory):ConversationHistory {
+    const bounded=boundHistory(history.destination,history.messages,history.requested,this.config.historyMaxChars);
+    return {...history,...bounded,truncated:history.truncated||bounded.truncated};
+  }
+  private async nameMessages(messages:PreparedMessage[],history:ConversationHistory|undefined,signal:AbortSignal):Promise<ConversationHistory|undefined> {
+    const quotes=[...new Set(messages.flatMap(message=>message.quote?[message.quote]:[]))];
+    await this.senderNames.apply([...messages,...(history?.messages??[]),...quotes.flatMap(quote=>quote.message?[quote.message]:[])],signal);
+    for(const quote of quotes)if(quote.message) {
+      const bounded=boundHistory(quote.message.destination,[quote.message],1,Math.min(4000,this.config.historyMaxChars));
+      quote.message=bounded.messages[0];quote.truncated ||= bounded.truncated;
+      if(!quote.message){quote.status='unavailable';quote.error='QUOTE_TOO_LARGE';delete quote.media;}
+    }
+    return history?this.namedHistory(history):undefined;
+  }
   private async contextHistory(messages:PreparedMessage[],signal:AbortSignal,recent?:RecentHistory):Promise<ConversationHistory|undefined> {
     const requested=this.config.historyContextMessages;if(!requested)return undefined;
     const destination=messages[0].destination;
@@ -206,7 +225,9 @@ export class Bridge {
       if(recent?.error)throw new Error(recent.error);
       const beforeId=Math.min(...messages.map(m=>Number(m.id)));
       if(recent?.messages){this.historyError=undefined;return this.historyView(destination,recent.messages,requested,beforeId);}
-      return await this.getHistory(destination,requested,{signal,beforeId});
+      if(!allowedDestination(this.config,destination))throw new Error('DESTINATION_DENIED');
+      const records=await this.client.getHistory(destination,this.config.botUid,100,AbortSignal.any([signal,AbortSignal.timeout(this.config.historyTimeoutMs)]));
+      this.historyError=undefined;return this.historyView(destination,records,requested,beforeId);
     }
     catch(error) {
       signal.throwIfAborted();
@@ -303,7 +324,7 @@ export class Bridge {
         for(const job of jobs)prepared.push(await this.prepare(job,dir,signal));
         signal.throwIfAborted();
         const recent=await this.prepareQuotes(prepared,dir,signal);
-        const history=await this.contextHistory(prepared,signal,recent);
+        const history=await this.nameMessages(prepared,await this.contextHistory(prepared,signal,recent),signal);
         signal.throwIfAborted();
         if(!this.ports.session.supportsSubmissionBarrier)await beforeSubmit();
         const result=await this.ports.session.run(prepared,signal,{beforeSubmit,history});

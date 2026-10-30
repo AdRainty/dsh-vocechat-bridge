@@ -24,6 +24,7 @@ async function setup(t:any, overrides:Partial<BridgeConfig>={}, run?:SessionPort
   let asrRequests=0;
   let holdSends=false;
   let history:any[]=[],historyFailure=false,historyRequests=0;
+  const nameRequests:number[]=[];
   const api=createServer(async(req,res)=>{
     const chunks:Buffer[]=[];for await(const c of req)chunks.push(c);const body=Buffer.concat(chunks);
     if(req.url?.startsWith('/api/resource/file')){const image=req.url.includes('test_image'),file=req.url.includes('test_file');res.writeHead(200,{'content-type':image?'image/png':file?'application/pdf':'audio/wav'});res.end(image?Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII=','base64'):file?Buffer.from('%PDF-1.4 test'):wav());return;}
@@ -34,6 +35,7 @@ async function setup(t:any, overrides:Partial<BridgeConfig>={}, run?:SessionPort
       res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({path:'2026/10/29/uploaded',size:end-start}));return;
     }
     if(req.url?.match(/^\/api\/bot\/(user|group)\/\d+\/messages\?/)){historyRequests++;res.writeHead(historyFailure?503:200,{'content-type':'application/json'});res.end(historyFailure?'private-provider-data':JSON.stringify(history));return;}
+    if(req.url?.match(/^\/api\/bot\/user\/\d+\?uid=\d+$/)){const uid=Number(new URL(req.url,'http://local').searchParams.get('uid'));nameRequests.push(uid);res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({uid,name:`User ${uid}`}));return;}
     sent.push({url:req.url||'',text:body.toString(),type:String(req.headers['content-type'])});
     if(holdSends)return;
     res.writeHead(200,{'content-type':'application/json'});res.end('123');
@@ -46,7 +48,7 @@ async function setup(t:any, overrides:Partial<BridgeConfig>={}, run?:SessionPort
   t.after(async()=>{await bridge.stop();await new Promise<void>(r=>api.close(()=>r()));await rm(dir,{recursive:true,force:true});});
   const url=`http://127.0.0.1:${(bridge.status().address as any).port}/vocehook`;
   return {bridge,calls,sent,url,dir,base,failAsr:()=>{asrFail=true;},asrRequests:()=>asrRequests,holdSends:()=>{holdSends=true;},
-    setHistory:(value:any[])=>{history=value;},failHistory:()=>{historyFailure=true;},historyRequests:()=>historyRequests};
+    setHistory:(value:any[])=>{history=value;},failHistory:()=>{historyFailure=true;},historyRequests:()=>historyRequests,nameRequests};
 }
 
 test('background history excludes current/future records, reuses ASR, denies other destinations and tolerates outages',async t=>{
@@ -74,6 +76,21 @@ test('background history excludes current/future records, reuses ASR, denies oth
 test('configuration fails closed and rejects malformed values',()=>{
   const c=parseConfig();assert.equal(c.enabled,false);assert.equal(allowedDestination(c,{kind:'user',id:1}),false);
   for(const bad of [{enabled:true},{maxAudioSeconds:0},{maxQueue:-1},{webhookPath:'/'},{userWhitelist:['10']},{baseUrl:'https://key:secret@example.com'},{allowedRemoteOrigins:['https://example.com/path']},{asrProvider:'unknown'},{asrAcceptedFormats:[]},{asrAcceptedFormats:['exe']},{logLevel:'verbose'}])assert.throws(()=>parseConfig(bad as any));
+});
+
+test('current, quoted and historical senders carry display names while UID filtering and cache remain shared',async t=>{
+  const histories:any[]=[];
+  const f=await setup(t,{},async(_messages,_signal,options)=>{histories.push(options?.history);return {quiet:true};});
+  f.setHistory([event(50,2,20,'Bot original'),event(51,11,20,'member history'),event(52,99,99,'other group')]);
+  await f.bridge.accept({...event(100,10,20,'new reply'),detail:{type:'reply',mid:50,content_type:'text/plain',content:'new reply'}});
+  await waitFor(()=>f.bridge.status().batchCounts.done===1);
+  assert.equal(f.calls[0][0].senderName,'User 10');assert.equal(f.calls[0][0].senderId,10);assert.equal(f.calls[0][0].quote?.message?.senderName,'User 2');
+  assert.deepEqual(histories[0].messages.map((m:any)=>[m.senderId,m.senderName]),[[2,'User 2'],[11,'User 11']]);
+  assert.deepEqual([...f.nameRequests].sort((a,b)=>a-b),[2,10,11]);
+  await f.bridge.accept(event(101,10,20,'same sender again'));await waitFor(()=>f.bridge.status().batchCounts.done===2);
+  const history=await f.bridge.getHistory({kind:'group',id:20},2);
+  assert.deepEqual(history.messages.map(m=>m.senderName),['User 2','User 11']);assert.equal(f.nameRequests.length,3);
+  assert.doesNotMatch(JSON.stringify(f.bridge.status()),/User 10|User 11|User 2/);
 });
 test('normalize official direct/group payload, media and invalid event',()=>{
   assert.deepEqual(normalizeWebhook(event(1))?.destination,{kind:'user',id:10});
