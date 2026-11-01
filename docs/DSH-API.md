@@ -48,7 +48,15 @@ v0.2.0 先按来源/会话/发送者完成独立防抖并封批，再准备附�
 
 ## 验证记录
 
-`tests/dsh.test.ts` 当前 **24 个测试通过**，覆盖来源归属、共享会话顺序、其他渠道混入、最后 step、失败 turn、冷恢复、模型和 preset 恢复、observation lease 释放、原生附件、取消、工具发送、部分成功与 quiet，以及合并批次单条投递、提交屏障、忙碌等待超时隔离、不同发送者拒绝合并和前置 Web turn 隔离。v0.4.1 增加内部上下文误判及混合回合显式读取/主动发送的验证；v0.4.8 用一项针对性测试验证首次输入前/回合中压缩、指令与目录刷新、后续消息回复，以及真实混合来源和未知 form 仍受限制。
+### 本机插件主动对话服务（v0.4.9）
+
+桥接通过 Cordis `ctx.provide('vocechatBridge', service)` 提供版本为 `1` 的本机服务。调用方使用 `ctx.get('vocechatBridge').proactiveConversation({sessionId, requestId, text, destination}, signal?)`，`text` 是本次主动对话的用户角色提示，`destination` 必须明确为私聊 UID 或群聊 GID。
+
+服务先校验固定 Session、`allowProactive` 和目标白名单，再等待已有回合空闲。随后创建 `source.form:'proactive'` 的单条消息，保留独立的请求 ID，不伪造 VoceChat 入站消息 ID。回复目标在排队前复制，后续调用方修改参数不会改变收件人。正常完成后发送最终文字；工具已经成功发出消息时不重复发送，安静结束或真实混合来源则不外发。返回 `delivered:true` 代表发送层收到确认；仅入队、空回复、生成失败和投递失败不会被当作已经送达。超时或失败不自动重新生成或补发。
+
+该服务不暴露 Bot Key 或底层客户端，不增加对人格插件的硬依赖。人格或提醒插件需要适配调用此服务，其开关和私聊/群聊目标配置由调用方管理。普通工具调用及 Webhook 入站继续使用既有流程。
+
+`tests/dsh.test.ts` 当前 **25 个测试通过**，覆盖来源归属、共享会话顺序、其他渠道混入、最后 step、失败 turn、冷恢复、模型和 preset 恢复、observation lease 释放、原生附件、取消、工具发送、部分成功与 quiet，以及合并批次单条投递、提交屏障、忙碌等待超时隔离、不同发送者拒绝合并和前置 Web turn 隔离。v0.4.1 增加内部上下文误判及混合回合显式读取/主动发送的验证；v0.4.8 验证压缩及上下文刷新；v0.4.9 增加主动对话到固定私聊/群聊的闭环验证。
 
 另外使用本机 **真实 0.2.1-rc.3** `dsh-tools.defineTool` 编译全部十个工具的参数 schema（含 `voce_speak` 与两个历史查询工具），均通过；使用真实 `dsh-llm.createUserMessage` 和 `dsh-session.Session.create/append` 验证结构化插件 source 的 `user/message`，已被宿主接受且消息不可变。这些验证只在内存中执行，不连接生产会话、不调用模型、不发送真实消息。
 

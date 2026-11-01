@@ -25,6 +25,8 @@ export type OutgoingAttachment = { kind: 'image' | 'audio' | 'file'; path?: stri
 export type SpeechRequest = { text: string; voice?: string; instructions?: string };
 export type OutboundMessage = { text?: string; format?: 'plain' | 'markdown'; attachments?: OutgoingAttachment[]; speech?: SpeechRequest; replyTo?: number };
 export type SessionRunOptions = { beforeSubmit: () => Promise<void>; history?: ConversationHistory };
+/** Trusted local plugins may request a conversation with an explicit recipient. */
+export type ProactiveConversation = { sessionId:string; requestId:string; text:string; destination:Destination };
 export interface SessionPort {
   supportsSubmissionBarrier?: boolean;
   run(messages: PreparedMessage[], signal: AbortSignal, options?: SessionRunOptions): Promise<{ text?: string; sent?: boolean; quiet?: boolean }>;

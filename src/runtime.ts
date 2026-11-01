@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
-import { parseConfig, speechFields } from './config.ts';
+import { allowedDestination, parseConfig, speechFields } from './config.ts';
 import type { BridgeConfig } from './config.ts';
 import type { Bridge } from './bridge.ts';
 import type { DshSessionPort, HostAgent } from './dsh.ts';
-import type { Destination, OutboundMessage } from './types.ts';
+import type { Destination, OutboundMessage, ProactiveConversation } from './types.ts';
 
 const signature=(config:BridgeConfig)=>createHash('sha256').update(JSON.stringify(Object.fromEntries(
   Object.entries(config).filter(([key])=>key!=='enabled' && !speechFields.includes(key as typeof speechFields[number]))))).digest('hex');
@@ -85,6 +85,24 @@ export class BridgeRuntime {
   getHistory(destination:Destination,limit=20,options:Parameters<Bridge['getHistory']>[2]={}) {
     if(!this.active)return Promise.reject(new Error('BRIDGE_STOPPED'));
     return this.active.bridge.getHistory(destination,limit,options);
+  }
+  async proactiveConversation(request:ProactiveConversation,signal:AbortSignal=new AbortController().signal) {
+    const active=this.active;if(!active)throw new Error('BRIDGE_STOPPED');
+    const config=active.bridge.config;
+    if(!request || request.sessionId!==config.targetSessionId)throw new Error('TOOL_SESSION_DENIED');
+    if(!config.allowProactive)throw new Error('PROACTIVE_DISABLED');
+    if(!request.destination || !allowedDestination(config,request.destination))throw new Error('DESTINATION_DENIED');
+    if(typeof request.requestId!=='string' || !request.requestId.trim() || request.requestId.length>200 ||
+      typeof request.text!=='string' || !request.text.trim() || Array.from(request.text).length>config.maxTextChars)throw new Error('INVALID_PROACTIVE_REQUEST');
+    // Capture the recipient before queueing; a later settings edit cannot move it.
+    const input={...request,destination:{...request.destination}};
+    const result=await active.session.runProactive(input,signal);
+    if(result.sent)return {delivered:true,via:'tool' as const};
+    if(result.mixed)throw new Error('SHARED_TURN_ROUTING_DENIED');
+    if(result.quiet)return {delivered:false,quiet:true};
+    if(!result.text?.trim())throw new Error('DSH_EMPTY_REPLY');
+    const receipts=await active.bridge.send(input.destination,{text:result.text},{proactive:true,signal});
+    return {delivered:true,via:'automatic' as const,receipts};
   }
   readonly session = {
     assertToolSession:(agent:HostAgent|undefined)=>{

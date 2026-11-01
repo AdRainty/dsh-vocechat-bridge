@@ -132,7 +132,7 @@ async function main() {
   const temporary = await fsp.mkdtemp(path.join(root, '.host-smoke-'));
   const originalListen = Server.prototype.listen;
   let listenCalls = 0;
-  const effects = [], registered = [], logs = [], routes = [];
+  const effects = [], registered = [], logs = [], routes = [], services = new Map();
   let bridge;
   try {
     const entry = await import(pathToFileURL(path.join(root, 'dist', 'index.js')).href);
@@ -149,6 +149,7 @@ async function main() {
     const ctx = {
       agents: { get() { throw new Error('Disabled plugin must not resolve a live session.'); }, resume() { throw new Error('Disabled plugin must not resume a session.'); } },
       tools: { register(tool) { registered.push(tool); return () => {}; } },
+      provide(name,service) { services.set(name,service); },
       logger() { return Object.fromEntries(['debug', 'info', 'warn', 'error'].map(level => [level, text => logs.push({ level, text })])); },
       get() { throw new Error('Disabled plugin must not access credentials or host services.'); },
       on() { throw new Error('Disabled plugin must not subscribe to a session.'); },
@@ -159,6 +160,8 @@ async function main() {
       },
     };
     bridge = entry.apply(ctx, config);
+    assert.equal(services.get('vocechatBridge').version,1);
+    await assert.rejects(services.get('vocechatBridge').proactiveConversation({}),/BRIDGE_STOPPED/);
     // Give the entry startup promise and its disposal guard a complete tick.
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(bridge.status().running, false);

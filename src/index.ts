@@ -75,6 +75,10 @@ export function apply(ctx: any, rawConfig: any) {
   const autoStart=new AutoStartController({ready,enabled:()=>settings.config().enabled,runtime,
     onError:code=>logger.warn(`BRIDGE_AUTO_START_WAITING: ${code}`)});
   registerVoceTools(ctx,runtime,runtime.session,defineTool);
+  // A local plugin can await the owned turn and confirmed transport delivery.
+  // No credentials or raw client bypass are exposed through this service.
+  ctx.provide?.('vocechatBridge',{version:1,
+    proactiveConversation:(request:import('./types.ts').ProactiveConversation,signal?:AbortSignal)=>runtime.proactiveConversation(request,signal)});
   // Keep settings on DSH's web server so a stopped bridge can still be configured.
   const handler=createSettingsHandler({settings,ready,runtime,resolveCredential,credentials:()=>{
     try{return typeof ctx.get==='function'?ctx.get('credentials'):ctx.credentials;}catch{return undefined;}

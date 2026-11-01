@@ -8,6 +8,10 @@ import { DshSessionPort, type HostAgent } from '../src/dsh.ts';
 import { registerVoceTools } from '../src/tools.ts';
 import type { PreparedMessage } from '../src/types.ts';
 import { boundHistory } from '../src/history.ts';
+import { Bridge } from '../src/bridge.ts';
+import { BridgeRuntime } from '../src/runtime.ts';
+import { parseConfig } from '../src/config.ts';
+import { createServer } from 'node:http';
 
 const signal = () => new AbortController().signal;
 const incoming = (text = 'hello'): PreparedMessage => ({ id: '42', senderId: 7, destination: { kind: 'user', id: 7 }, timestamp: 123, text, attachments: [] });
@@ -74,6 +78,62 @@ test('DSH input source is structured and automatic reply belongs to the exact in
   assert.deepEqual(input.source.destination, { kind: 'user', id: 7 });
   assert.equal(input.source.messages[0].senderId, 7);
   assert.equal(f.listeners.size, 0);
+});
+
+test('local proactive conversations deliver to explicit recipients after completion and respect tools, quiet and permissions',async t=>{
+  const dir=await mkdtemp(join(tmpdir(),'voce-proactive-')),sent:any[]=[];
+  const api=createServer(async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+    sent.push({url:req.url,text:Buffer.concat(chunks).toString()});res.setHeader('content-type','application/json');res.end('123');
+  });
+  await new Promise<void>(resolve=>api.listen(0,'127.0.0.1',resolve));
+  let config=parseConfig({enabled:true,baseUrl:`http://127.0.0.1:${(api.address() as any).port}`,botUid:2,
+    targetSessionId:'session-test',allowProactive:true,userWhitelist:[7],groupWhitelist:[20],webhookPort:0,
+    statePath:join(dir,'state.json'),tempDir:join(dir,'tmp')});
+  let f=fixture();
+  const runtime=new BridgeRuntime(()=>config,current=>{
+    f=fixture();return {session:f.session,bridge:new Bridge(current,{session:f.session,resolveCredential:async()=> 'local-test-key'})};
+  });
+  t.after(async()=>{await runtime.dispose();api.closeAllConnections();await new Promise<void>(resolve=>api.close(()=>resolve()));await rm(dir,{recursive:true,force:true});});
+  const request=()=>({sessionId:'session-test',requestId:randomUUID(),text:'Open a conversation',destination:{kind:'user' as const,id:7}});
+  await assert.rejects(runtime.proactiveConversation(request()),/BRIDGE_STOPPED/);await runtime.start();
+  f.setFollowup(m=>{
+    assert.equal(m.source.form,'proactive');assert.equal(m.source.messages,undefined);assert.equal(m.content[0].text,'Open a conversation');
+    f.start(m);f.emit('user/message',{id:randomUUID(),source:{kind:'compact-checkpoint'}});
+    assert.match(f.contexts[0].text(),/plugin-initiated conversation/);f.answer('private hello');
+  });
+  assert.deepEqual(await runtime.proactiveConversation(request()),{delivered:true,via:'automatic',receipts:[{messageId:123}]});
+  assert.deepEqual(sent,[{url:'/api/bot/send_to_user/7',text:'private hello'}]);
+  f.setFollowup(m=>{f.start(m);assert.deepEqual(f.session.outboundMode(f.agent,{kind:'group',id:20}),{proactive:false});f.answer('group hello');});
+  await runtime.proactiveConversation({...request(),destination:{kind:'group',id:20}});
+  assert.equal(sent.at(-1).url,'/api/bot/send_to_group/20');
+  // A busy Agent queues the prompt, and later caller mutation cannot move it.
+  let release!:()=>void;f.agent.whenIdle=()=>new Promise<void>(resolve=>{release=resolve;});
+  f.setFollowup(m=>{f.start(m);f.answer('queued hello');});
+  const queued=request(),operation=runtime.proactiveConversation(queued);queued.destination.id=999;
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(f.queued.length,2);release();await operation;
+  assert.equal(sent.at(-1).url,'/api/bot/send_to_user/7');f.agent.whenIdle=async()=>{};
+  registerVoceTools(f.ctx,runtime,runtime.session,value=>value);
+  f.setFollowup(m=>{
+    f.start(m);void f.tools.get('voce_send_text').execute({destination:{kind:'user',id:7},text:'tool hello'},
+      {agent:f.agent}).then(()=>f.answer('must not duplicate'));
+  });
+  const before=sent.length;
+  assert.deepEqual(await runtime.proactiveConversation(request()),{delivered:true,via:'tool'});
+  assert.equal(sent.length,before+1);assert.equal(sent.at(-1).text,'tool hello');
+  f.setFollowup(m=>{f.start(m);f.session.quiet(f.agent);f.answer('quiet');});
+  assert.deepEqual(await runtime.proactiveConversation(request()),{delivered:false,quiet:true});assert.equal(sent.length,before+1);
+  f.setFollowup(m=>{f.start(m);f.emit('user/message',{id:'web',source:{kind:'user'}});f.answer('mixed');});
+  await assert.rejects(runtime.proactiveConversation(request()),/SHARED_TURN_ROUTING_DENIED/);assert.equal(sent.length,before+1);
+  f.setFollowup(m=>{f.start(m);f.answer('');});
+  await assert.rejects(runtime.proactiveConversation(request()),/DSH_EMPTY_REPLY/);assert.equal(sent.length,before+1);
+  const inputs=f.queued.length;
+  await assert.rejects(runtime.proactiveConversation({...request(),sessionId:'other'}),/TOOL_SESSION_DENIED/);
+  await assert.rejects(runtime.proactiveConversation({...request(),destination:{kind:'group',id:99}}),/DESTINATION_DENIED/);
+  await assert.rejects(runtime.proactiveConversation({...request(),text:''}),/INVALID_PROACTIVE_REQUEST/);
+  assert.equal(f.queued.length,inputs);
+  config={...config,allowProactive:false};await runtime.reload();
+  await assert.rejects(runtime.proactiveConversation(request()),/PROACTIVE_DISABLED/);assert.equal(f.queued.length,0);
 });
 
 test('a merged batch becomes exactly one user message with ordered content and original metadata',async()=>{
