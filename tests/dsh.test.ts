@@ -51,7 +51,7 @@ function fixture() {
   const session = new DshSessionPort(ctx, { targetSessionId: 'session-test', turnTimeoutMs: 2000 }, {
     createUserMessage: input => ({ ...input, id: randomUUID(), role: 'user' }),
   });
-  const start = (message: any) => { currentTurn++; emit('turn/start', { turn: currentTurn }); emit('step/start', { turn: currentTurn, step: 1 }); emit('user/message', message); };
+  const start = (message: any, beforeMessage: () => void = () => {}) => { currentTurn++; emit('turn/start', { turn: currentTurn }); beforeMessage(); emit('step/start', { turn: currentTurn, step: 1 }); emit('user/message', message); };
   const answer = (text: string, reason = 'completed') => {
     emit('assistant/message', { turn: currentTurn, step: 1, message: { content: [{ type: 'text', text }] } });
     emit('turn/end', { turn: currentTurn, reason: { kind: reason } });
@@ -199,6 +199,44 @@ test('memory recall, clock snapshots and model notices do not close automatic ro
     f.answer('mixed input stays local');
   });
   assert.equal((await f.session.run([incoming()], signal())).quiet, true);
+});
+
+test('compaction checkpoints preserve the current reply, tool routing and subsequent turns without trusting other input', async () => {
+  const f=fixture();
+  let turn=0;
+  const checkpoint=()=>{
+    f.emit('compaction/start',{turn,compactionId:'compact-test'});
+    f.emit('compaction/summary',{compactionId:'compact-test',summary:[{type:'text',text:'earlier context'}]});
+    f.emit('user/message',{id:randomUUID(),role:'user',source:{kind:'compact-checkpoint',compactionId:'compact-test'},content:[{type:'text',text:'earlier context'}]});
+    f.emit('compaction/end',{turn,compactionId:'compact-test'});
+  };
+  for(const beforeMessage of [true,false]) {
+    f.setFollowup(m=>{
+      turn++;
+      f.start(m,beforeMessage?checkpoint:undefined);
+      if(!beforeMessage)checkpoint();
+      // The host refreshes instructions and the skill catalog after replacement.
+      for(const source of [{kind:'agent-instructions',form:'instructions',baseline:true},
+        {kind:'skill-catalog',form:'catalog',entries:[]}])f.emit('user/message',{id:randomUUID(),source});
+      assert.deepEqual(f.session.outboundMode(f.agent,{kind:'user',id:7}),{proactive:false});
+      assert.match(f.contexts[0].text(),/VoceChat transport context/);
+      f.answer('reply after compaction');
+    });
+    assert.deepEqual(await f.session.run([incoming()],signal()),{text:'reply after compaction',sent:false,quiet:false});
+  }
+  // A checkpoint must not reset protection when real Web/QQ input also arrives.
+  for(const source of [{kind:'user'},{kind:'plugin:dsh-qq-bridge'},{kind:'compact-checkpoint-task'},
+    {kind:'agent-instructions',form:'task'},{kind:'skill-catalog',form:'invocation'}]) {
+    f.setFollowup(m=>{
+      turn++;f.start(m);f.emit('user/message',{id:randomUUID(),source});checkpoint();
+      assert.deepEqual(f.session.outboundMode(f.agent,{kind:'user',id:7}),{proactive:true});
+      assert.equal(f.contexts[0].text(),'');f.answer('mixed turn stays local');
+    });
+    assert.deepEqual(await f.session.run([incoming()],signal()),{text:undefined,sent:false,quiet:true});
+  }
+  f.setFollowup(m=>{f.start(m);f.answer('next message works');});
+  assert.deepEqual(await f.session.run([incoming()],signal()),{text:'next message works',sent:false,quiet:false});
+  assert.equal(f.queued.length,8);assert.equal(f.listeners.size,0);
 });
 
 test('mixed turns allow whitelisted history and explicit proactive sends while suppressing automatic replies', async () => {

@@ -1,6 +1,6 @@
 # DSH 接口核实与桥接边界
 
-核实版本：**0.2.1-rc.3**。使用本机安装包 `app.asar/dsh/node_modules/@deepseek-ai/` 中的已发行源码及包版本作为实现依据；参考仓库为 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 和本工作区的 `dsh-qq-bridge`。未修改宿主、已有会话配置、SOUL 或记忆文件。
+基础接口核实版本：**0.2.1-rc.3**；v0.4.8 另核实 **0.2.1-rc.5** 的压缩与上下文刷新协议。使用本机安装包 `app.asar/dsh/node_modules/@deepseek-ai/` 中的已发行源码及包版本作为实现依据；参考仓库为 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 和本工作区的 `dsh-qq-bridge`。未修改宿主、已有会话配置、SOUL 或记忆文件。
 
 ## 核实到的接口
 
@@ -15,6 +15,7 @@ v0.4.6 的入站引用沿用一条 `createUserMessage`：`source.messages` 仍�
 | `dsh-agent-loop/lib/index.js`，945、1067–1073、1029 行 | 事件顺序为 `turn/start` → `user/message` → `assistant/message` → `turn/end`。必须在 `followup()` 前注册监听，并以注入消息的稳定 `id` 认领具体 turn。 |
 | `dsh-agent-loop/lib/index.js`，218、338–346 行；本机上下文生产者 | 内部 user-role 上下文包括 `runtime-context`、`time-context/snapshot`、`dsh-mnemon/instructions` 与 `dsh-mnemon/recall`；它们不代表新增渠道输入。按已核实的 kind/form 精确识别，不按插件名前缀放行。 |
 | `dsh-agent/lib/index.js`，133–146 行 | 模型切换通知使用 `source.kind:'model-selection', form:'notice'`，同样属于内部上下文。 |
+| `dsh-compaction` 的 checkpoint 协议、`dsh-compaction-basic`、`dsh-agent-instructions`、`dsh-tool-skill`（0.2.1-rc.5） | 压缩摘要是 `source.kind:'compact-checkpoint'` 的 `user/message`，替换旧历史；压缩后可能补发 `agent-instructions/instructions` 和 `skill-catalog/catalog`。这三种消息不代表新增渠道输入。摘要识别沿用宿主的精确 kind 判断，指令和目录还要求匹配 form。 |
 | `dsh-llm/lib/index.js`，37–63 行 | `createUserMessage({content,source})` 生成稳定 UUID，并 deep-freeze 消息。插件来源使用 producer-owned `kind:'plugin:dsh-vocechat-bridge'`，来源元数据保留 channel、destination、消息 ID、发送者、时间及附件信息。 |
 | `dsh-session-query/lib/index.js`，350、450–480、1064 行 | `observeSession(id,{projectionMode:'all',signal})` 返回 observation lease；模型选择位于 `observation.projections.values.modelSelection.pending`，preset 位于 `values.agentPreset`。lease 使用 **`[Symbol.dispose]()`** 释放。 |
 | `dsh-api-session-controller/lib/index.js`，274–300 行 | 官方 GUI 选择模型的优先级为 pending model selection → 最近 `request/header` → 部署默认。桥接冷恢复遵循此顺序，且不把由 adapter 默认提供的 reasoning effort 固化为用户选择。 |
@@ -37,7 +38,7 @@ v0.2.0 先按来源/会话/发送者完成独立防抖并封批，再准备附�
 
 自动回复必须同时满足：固定会话 ID、自己生成的入站 message ID、该 message 所属 turn、正常 `completed` 结束。只读取最后 step 的文本，避免把工具前的过程叙述当最终回复发送。
 
-若其他渠道在同轮插入外部 user-role 消息，该轮标记为来源混合：自动回复关闭。内部运行上下文、已核实的记忆召回、时间快照和模型切换通知不会触发这一保护。未知生产者或同一生产者的其他 form 仍作为外部输入处理，避免把真实的新任务误当成背景。
+若其他渠道在同轮插入外部 user-role 消息，该轮标记为来源混合：自动回复关闭。内部运行上下文、已核实的记忆召回、时间快照、模型切换通知、压缩摘要，以及指令和技能目录刷新不会触发这一保护。未知生产者或指令/目录生产者的其他 form 仍作为外部输入处理，避免把真实的新任务误当成背景。压缩摘要不会清除已经识别到的真实混合来源。
 
 主动工具发送必须显式给出 `{kind:'user'|'group',id:number}`，调用者须是配置的目标会话，发送层继续校验 UID/GID 白名单。发往当前来源以外的目标，或由 Web/QQ、混合来源轮次调用工具，属于主动发送，受 `allowProactive` 开关约束。历史查询只读，独立校验固定 Session 的真实 Agent 与目标白名单，不依赖自动回复归属，也不受主动发送开关影响。
 
@@ -47,7 +48,7 @@ v0.2.0 先按来源/会话/发送者完成独立防抖并封批，再准备附�
 
 ## 验证记录
 
-`tests/dsh.test.ts` 当前 **22 个测试通过**，覆盖来源归属、共享会话顺序、其他渠道混入、最后 step、失败 turn、冷恢复、模型和 preset 恢复、observation lease 释放、原生附件、取消、工具发送、部分成功与 quiet，以及合并批次单条投递、提交屏障、忙碌等待超时隔离、不同发送者拒绝合并和前置 Web turn 隔离。v0.4.1 增加内部上下文误判及混合回合显式读取/主动发送的验证；相同生产者的未知 form、未授权目标与关闭主动发送仍被正确限制。
+`tests/dsh.test.ts` 当前 **24 个测试通过**，覆盖来源归属、共享会话顺序、其他渠道混入、最后 step、失败 turn、冷恢复、模型和 preset 恢复、observation lease 释放、原生附件、取消、工具发送、部分成功与 quiet，以及合并批次单条投递、提交屏障、忙碌等待超时隔离、不同发送者拒绝合并和前置 Web turn 隔离。v0.4.1 增加内部上下文误判及混合回合显式读取/主动发送的验证；v0.4.8 用一项针对性测试验证首次输入前/回合中压缩、指令与目录刷新、后续消息回复，以及真实混合来源和未知 form 仍受限制。
 
 另外使用本机 **真实 0.2.1-rc.3** `dsh-tools.defineTool` 编译全部十个工具的参数 schema（含 `voce_speak` 与两个历史查询工具），均通过；使用真实 `dsh-llm.createUserMessage` 和 `dsh-session.Session.create/append` 验证结构化插件 source 的 `user/message`，已被宿主接受且消息不可变。这些验证只在内存中执行，不连接生产会话、不调用模型、不发送真实消息。
 

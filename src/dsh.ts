@@ -40,6 +40,11 @@ const sameDestination = (a: Destination, b: Destination) => a.kind === b.kind &&
 function isInfrastructureMessage(message: any): boolean {
   const { kind, form } = message.source ?? {};
   return kind === 'runtime-context'
+    // DSH replaces older history with a user-role checkpoint during compaction.
+    // It is background for the existing turn, not another channel's request.
+    || kind === 'compact-checkpoint'
+    || kind === 'agent-instructions' && form === 'instructions'
+    || kind === 'skill-catalog' && form === 'catalog'
     || kind === 'time-context' && form === 'snapshot'
     || kind === 'model-selection' && form === 'notice'
     || kind === 'dsh-mnemon' && (form === 'instructions' || form === 'recall');
